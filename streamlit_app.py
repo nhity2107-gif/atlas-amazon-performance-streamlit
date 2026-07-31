@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames
+from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
 
 
 st.set_page_config(
@@ -733,6 +733,11 @@ elif page.startswith("02"):
                 f"Kết nối ảnh Lark: {len(sample_images)}/{len(sample_image_references)} "
                 "ảnh mẫu tải thành công qua API."
             )
+            if not sample_images:
+                st.warning(
+                    "API ảnh Lark chưa sẵn sàng: "
+                    + probe_image_download(config, sample_image_references[0])
+                )
     product_uploads = {}
     upload_columns = st.columns(2)
     if store in {"All Stores", "Wrappiness"}:

@@ -384,7 +384,12 @@ class LarkClient:
         response.raise_for_status()
         mime_type = response.headers.get("Content-Type", "image/jpeg").split(";", 1)[0]
         if not mime_type.startswith("image/"):
-            return ""
+            try:
+                payload = response.json()
+                detail = f"{payload.get('code', 'unknown')}: {payload.get('msg', 'non-image response')}"
+            except ValueError:
+                detail = f"unexpected content type {mime_type}"
+            raise LarkAPIError(detail)
         return f"data:{mime_type};base64,{base64.b64encode(response.content).decode('ascii')}"
 
 
@@ -613,3 +618,33 @@ def fetch_image_data_urls(
             images[file_token] = data_url
         time.sleep(0.22)
     return images
+
+
+def probe_image_download(
+    config: LarkConfig,
+    reference: tuple[str, str, str],
+) -> str:
+    file_token, field_id, record_id = reference
+    if not file_token or not field_id or not record_id:
+        return "Thiếu file token, field ID hoặc record ID."
+    client = LarkClient(config.app_id, config.app_secret)
+    try:
+        data_url = client.download_bitable_media(
+            file_token,
+            config.total_asin_table_id,
+            field_id,
+            record_id,
+        )
+    except requests.HTTPError as exc:
+        response = exc.response
+        detail = ""
+        if response is not None:
+            try:
+                payload = response.json()
+                detail = f" · {payload.get('code', '')}: {payload.get('msg', '')}".rstrip(": ")
+            except ValueError:
+                detail = ""
+        return f"HTTP {response.status_code if response is not None else 'error'}{detail}"
+    except (requests.RequestException, LarkAPIError) as exc:
+        return str(exc)
+    return "OK" if data_url else "Không nhận được dữ liệu ảnh."
