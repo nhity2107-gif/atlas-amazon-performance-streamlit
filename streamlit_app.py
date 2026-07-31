@@ -794,6 +794,11 @@ elif page.startswith("02"):
                 .itertuples(index=False, name=None)
             )
             image_data_urls = cached_product_images(config, image_references)
+            requested_image_tokens = {
+                token
+                for token, field_id, record_id in image_references[:25]
+                if token and field_id and record_id
+            }
             products["image_url"] = products["image_token"].map(image_data_urls).fillna("")
             products["image_url"] = products["image_url"].where(
                 products["image_url"].ne(""),
@@ -810,6 +815,11 @@ elif page.startswith("02"):
                     "asin_count": "ASIN count",
                 }
             )
+            if requested_image_tokens:
+                st.caption(
+                    f"Ảnh Lark: đã tải {len(image_data_urls)}/{len(requested_image_tokens)} "
+                    "ảnh của Top Record ID qua API."
+                )
             st.dataframe(
                 products[["#", "Image", "Record ID", "Product", "ASIN count", "Revenue", "Orders", "Units", "Share"]].head(50),
                 hide_index=True,
