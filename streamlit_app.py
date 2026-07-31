@@ -249,7 +249,7 @@ def lark_config() -> tuple[LarkConfig | None, list[str]]:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v2") -> dict:
+def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v3") -> dict:
     del schema_version
     return fetch_lark_frames(config)
 

@@ -4,6 +4,8 @@ import unittest
 
 from lark_data import (
     asset_points,
+    clipart_frame,
+    find_field_name,
     idea_frame,
     is_launched_status,
     total_asin_frame,
@@ -46,6 +48,39 @@ class LarkDataTests(unittest.TestCase):
         self.assertTrue(is_launched_status("Scale 2"))
         self.assertTrue(is_launched_status("Paused"))
         self.assertFalse(is_launched_status("Ready for Ads"))
+
+    def test_visible_record_id_wins_over_internal_field(self) -> None:
+        self.assertEqual(
+            find_field_name(["Record ID", "_record_id"], ["Record ID"]),
+            "Record ID",
+        )
+
+    def test_clipart_created_and_updated_contributions(self) -> None:
+        mapping = {
+            "created_by": "Created By",
+            "new_asset_type": "New Created",
+            "created_date": "Created Date",
+            "updated_by": "Updated By",
+            "update_type": "Update",
+            "updated_date": "Updated Date",
+        }
+        frame, _ = clipart_frame(
+            [
+                {
+                    "fields": {
+                        "Created By": [{"name": "Alice"}],
+                        "New Created": "New Multi-layer Clipart",
+                        "Created Date": 1785456000000,
+                        "Updated By": [{"name": "Bob"}],
+                        "Update": "Update Multi-layer Clipart - Partial",
+                        "Updated Date": 1785456000000,
+                    }
+                }
+            ],
+            mapping,
+        )
+        self.assertEqual(frame["employee"].tolist(), ["Alice", "Bob"])
+        self.assertEqual(frame["asset_points"].tolist(), [10, 5])
 
 
 if __name__ == "__main__":

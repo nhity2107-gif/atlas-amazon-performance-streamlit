@@ -55,16 +55,12 @@ IDEA_ALIASES = {
 }
 
 CLIPART_ALIASES = {
-    "employee": [
-        "Created By",
-        "Create By",
-        "Creator",
-        "Nhân sự",
-        "Tên nhân sự",
-        "Custom By",
-    ],
-    "asset_type": ["Asset Type", "Loại Asset", "Type", "Update Type"],
-    "created_date": ["Created Time", "Create Time", "Created Date", "Date", "Ngày tạo"],
+    "created_by": ["Created By", "Create By", "Creator"],
+    "new_asset_type": ["New Created", "Asset Type", "New Asset Type"],
+    "created_date": ["Created Date", "Created Time", "Create Time"],
+    "updated_by": ["Updated By", "Update By"],
+    "update_type": ["Update", "Update Type"],
+    "updated_date": ["Updated Date", "Update Date"],
 }
 
 
@@ -75,7 +71,14 @@ def normalize_label(value: Any) -> str:
 
 
 def find_field_name(field_names: Iterable[str], aliases: Iterable[str]) -> str | None:
-    normalized = {normalize_label(name): name for name in field_names}
+    names = list(field_names)
+    for alias in aliases:
+        for name in names:
+            if name == alias:
+                return name
+    normalized: dict[str, str] = {}
+    for name in names:
+        normalized.setdefault(normalize_label(name), name)
     for alias in aliases:
         match = normalized.get(normalize_label(alias))
         if match:
@@ -326,8 +329,11 @@ def resolve_field_names(
     return {key: find_field_name(field_names, candidates) for key, candidates in aliases.items()}
 
 
-def total_asin_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str, str | None]]:
-    mapping = resolve_fields(records, TOTAL_ASIN_ALIASES)
+def total_asin_frame(
+    records: list[dict[str, Any]],
+    mapping_override: dict[str, str | None] | None = None,
+) -> tuple[pd.DataFrame, dict[str, str | None]]:
+    mapping = mapping_override or resolve_fields(records, TOTAL_ASIN_ALIASES)
     rows: list[dict[str, Any]] = []
     for record in records:
         fields = record.get("fields") or {}
@@ -367,8 +373,11 @@ def total_asin_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[
     return pd.DataFrame(rows, columns=columns), mapping
 
 
-def idea_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str, str | None]]:
-    mapping = resolve_fields(records, IDEA_ALIASES)
+def idea_frame(
+    records: list[dict[str, Any]],
+    mapping_override: dict[str, str | None] | None = None,
+) -> tuple[pd.DataFrame, dict[str, str | None]]:
+    mapping = mapping_override or resolve_fields(records, IDEA_ALIASES)
     rows: list[dict[str, Any]] = []
     for record in records:
         fields = record.get("fields") or {}
@@ -387,20 +396,31 @@ def idea_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str, s
     ), mapping
 
 
-def clipart_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str, str | None]]:
-    mapping = resolve_fields(records, CLIPART_ALIASES)
+def clipart_frame(
+    records: list[dict[str, Any]],
+    mapping_override: dict[str, str | None] | None = None,
+) -> tuple[pd.DataFrame, dict[str, str | None]]:
+    mapping = mapping_override or resolve_fields(records, CLIPART_ALIASES)
     rows: list[dict[str, Any]] = []
     for record in records:
         fields = record.get("fields") or {}
-        asset_type = fields.get(mapping["asset_type"]) if mapping["asset_type"] else None
-        rows.append(
-            {
-                "employee": display_value(fields.get(mapping["employee"])) if mapping["employee"] else "",
-                "asset_type": display_value(asset_type),
-                "created_date": lark_datetime(fields.get(mapping["created_date"])) if mapping["created_date"] else pd.NaT,
-                "asset_points": asset_points(asset_type),
-            }
+        contributions = (
+            ("created_by", "new_asset_type", "created_date"),
+            ("updated_by", "update_type", "updated_date"),
         )
+        for employee_key, asset_key, date_key in contributions:
+            employee = display_value(fields.get(mapping[employee_key])) if mapping[employee_key] else ""
+            asset_type = fields.get(mapping[asset_key]) if mapping[asset_key] else None
+            if not employee and not display_value(asset_type):
+                continue
+            rows.append(
+                {
+                    "employee": employee,
+                    "asset_type": display_value(asset_type),
+                    "created_date": lark_datetime(fields.get(mapping[date_key])) if mapping[date_key] else pd.NaT,
+                    "asset_points": asset_points(asset_type),
+                }
+            )
     return pd.DataFrame(
         rows,
         columns=["employee", "asset_type", "created_date", "asset_points"],
@@ -416,10 +436,12 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
     }
     records_by_table: dict[str, list[dict[str, Any]]] = {}
     available_fields: dict[str, list[str]] = {}
+    preflight_mapping: dict[str, dict[str, str | None]] = {}
     for key, (table_id, aliases) in table_specs.items():
         field_names = client.list_field_names(config.base_token, table_id)
         available_fields[key] = field_names
         mapping = resolve_field_names(field_names, aliases)
+        preflight_mapping[key] = mapping
         selected_fields = [name for name in mapping.values() if name]
         if not selected_fields:
             raise LarkAPIError(f"No KPI fields found in Lark table {table_id}")
@@ -432,9 +454,12 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
     total_records = records_by_table["total"]
     idea_records = records_by_table["ideas"]
     clipart_records = records_by_table["cliparts"]
-    total, total_mapping = total_asin_frame(total_records)
-    ideas, idea_mapping = idea_frame(idea_records)
-    cliparts, clipart_mapping = clipart_frame(clipart_records)
+    total, total_mapping = total_asin_frame(total_records, preflight_mapping["total"])
+    ideas, idea_mapping = idea_frame(idea_records, preflight_mapping["ideas"])
+    cliparts, clipart_mapping = clipart_frame(
+        clipart_records,
+        preflight_mapping["cliparts"],
+    )
     return {
         "total": total,
         "ideas": ideas,
