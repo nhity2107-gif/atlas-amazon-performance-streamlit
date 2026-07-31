@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
@@ -8,6 +9,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
+from snapshot_store import SnapshotError, empty_snapshot, load_encrypted_snapshot
+
+
+PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.enc"
 
 
 st.set_page_config(
@@ -286,6 +291,32 @@ def aggregate_order_report(uploaded_file, store_name: str) -> pd.DataFrame:
     result["ASIN"] = result["ASIN"].astype(str).str.upper().str.strip()
     result.insert(0, "Store", store_name)
     return result
+
+
+@st.cache_data(show_spinner=False)
+def persisted_order_performance(snapshot_key: str) -> pd.DataFrame:
+    try:
+        frame, _ = load_encrypted_snapshot(PERSISTED_SNAPSHOT_PATH, snapshot_key)
+    except SnapshotError:
+        return empty_snapshot()
+    return frame
+
+
+def selected_order_performance(
+    stores: list[str],
+    uploads: dict[str, object],
+) -> tuple[pd.DataFrame, bool]:
+    if all(uploads.get(name) is not None for name in stores):
+        return (
+            pd.concat(
+                [aggregate_order_report(uploads[name], name) for name in stores],
+                ignore_index=True,
+            ),
+            False,
+        )
+    persisted = persisted_order_performance(secret_value("DASHBOARD_DATA_KEY"))
+    persisted = persisted[persisted["Store"].isin(stores)].copy()
+    return persisted, not persisted.empty
 
 
 def secret_value(name: str) -> str:
@@ -761,11 +792,16 @@ elif page.startswith("02"):
     required_product_stores = (
         ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
     )
-    if all(product_uploads.get(name) is not None for name in required_product_stores):
-        product_performance = pd.concat(
-            [aggregate_order_report(product_uploads[name], name) for name in required_product_stores],
-            ignore_index=True,
+    product_performance, using_saved_orders = selected_order_performance(
+        required_product_stores,
+        product_uploads,
+    )
+    if using_saved_orders:
+        st.info(
+            "Đang dùng dữ liệu Order tháng 07/2026 đã lưu. Upload đủ report của store đang chọn "
+            "nếu muốn thay thế dữ liệu trong phiên hiện tại."
         )
+    if not product_performance.empty:
         if missing_secrets:
             st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
         else:
@@ -980,8 +1016,8 @@ else:
             st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
         else:
             st.info(
-                "Order report được xử lý trong bộ nhớ của phiên đăng nhập và không được "
-                "lưu vào repository public."
+                "Dashboard tự dùng dữ liệu Order tháng 07/2026 đã lưu. File gốc và thông tin khách hàng "
+                "không được lưu; chỉ lưu tổng hợp theo Store, ASIN và Record ID hint."
             )
             upload_cols = st.columns(2)
             with upload_cols[0]:
@@ -1003,22 +1039,15 @@ else:
             selected_stores = (
                 ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
             )
-            missing_reports = [
-                name for name in selected_stores if required_uploads[name] is None
-            ]
-            if missing_reports:
-                st.warning(
-                    "Hãy tải order report của: " + ", ".join(missing_reports)
-                    + ". Không cần tải lại report của store không được chọn."
-                )
-                st.stop()
-            performance = pd.concat(
-                [
-                    aggregate_order_report(required_uploads[name], name)
-                    for name in selected_stores
-                ],
-                ignore_index=True,
+            performance, using_saved_orders = selected_order_performance(
+                selected_stores,
+                required_uploads,
             )
+            if performance.empty:
+                st.error("Chưa có dữ liệu Order đã lưu và chưa upload đủ report.")
+                st.stop()
+            if using_saved_orders:
+                st.success("Đã nạp dữ liệu Order tháng 07/2026 từ bộ nhớ mặc định.")
             hero_threshold = st.number_input(
                 "Hero revenue threshold / Record ID",
                 min_value=0.0,

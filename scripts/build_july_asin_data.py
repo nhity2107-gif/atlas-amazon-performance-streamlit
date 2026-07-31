@@ -23,12 +23,22 @@ def aggregate_report(path: Path, store: str) -> pd.DataFrame:
         )
     ].copy()
     valid["revenue"] = valid["item-price"] + valid["shipping-price"]
+    valid["record_id_hint"] = (
+        valid.get("sku", pd.Series("", index=valid.index))
+        .fillna("")
+        .str.extract(r"\b(rec[A-Za-z0-9]+)\b", expand=False)
+        .fillna("")
+    )
     result = (
         valid.groupby("asin", dropna=False)
         .agg(
             Revenue=("revenue", "sum"),
             Orders=("amazon-order-id", "nunique"),
             Units=("quantity", "sum"),
+            record_id_hint=(
+                "record_id_hint",
+                lambda values: next((str(value) for value in values if str(value).strip()), ""),
+            ),
         )
         .reset_index()
         .rename(columns={"asin": "ASIN"})

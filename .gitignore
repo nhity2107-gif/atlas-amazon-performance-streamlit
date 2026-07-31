@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+data/july_2026_order_summary.csv
+database/
+reports/
+.secrets/
+snapshot/*.plain.*
