@@ -264,12 +264,22 @@ def aggregate_order_report(uploaded_file, store_name: str) -> pd.DataFrame:
         )
     ].copy()
     valid["Revenue"] = valid["item-price"] + valid["shipping-price"]
+    if "sku" in valid.columns:
+        valid["record_id_hint"] = (
+            valid["sku"].fillna("").str.extract(r"\b(rec[A-Za-z0-9]+)\b", expand=False).fillna("")
+        )
+    else:
+        valid["record_id_hint"] = ""
     result = (
         valid.groupby("asin", as_index=False)
         .agg(
             Revenue=("Revenue", "sum"),
             Orders=("amazon-order-id", "nunique"),
             Units=("quantity", "sum"),
+            record_id_hint=(
+                "record_id_hint",
+                lambda values: next((str(value) for value in values if str(value).strip()), ""),
+            ),
         )
         .rename(columns={"asin": "ASIN"})
     )
@@ -346,7 +356,12 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
         performance = performance[performance["Store"].eq(store_name)]
     asin_performance = (
         performance.groupby("ASIN", as_index=False)
-        .agg(Revenue=("Revenue", "sum"), Orders=("Orders", "sum"), Units=("Units", "sum"))
+        .agg(
+            Revenue=("Revenue", "sum"),
+            Orders=("Orders", "sum"),
+            Units=("Units", "sum"),
+            record_id_hint=("record_id_hint", first_nonempty),
+        )
     )
 
     if total.empty:
@@ -359,6 +374,41 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
         }
 
     total = total.drop_duplicates(["record_id", "asin"])
+    known_asins = set(total["asin"])
+    sku_hints = asin_performance[
+        ~asin_performance["ASIN"].isin(known_asins)
+        & asin_performance["record_id_hint"].fillna("").str.strip().ne("")
+    ][["ASIN", "record_id_hint"]].drop_duplicates("ASIN")
+    sku_fallback_count = len(sku_hints)
+    if not sku_hints.empty:
+        record_lookup = total.sort_values(["record_id", "asin"]).drop_duplicates("record_id")
+        fallback_rows = sku_hints.merge(
+            record_lookup,
+            left_on="record_id_hint",
+            right_on="record_id",
+            how="left",
+        )
+        fallback_rows["record_id"] = fallback_rows["record_id"].fillna(
+            fallback_rows["record_id_hint"]
+        )
+        fallback_rows["asin"] = fallback_rows["ASIN"]
+        fallback_date_columns = {
+            "date_pickup",
+            "listing_done_date",
+            "ps_pickup_date",
+            "custom_done_date",
+            "custom_check_done_date",
+            "testing_start_date",
+        }
+        for column in total.columns:
+            if column not in fallback_rows:
+                if column in fallback_date_columns:
+                    fallback_rows[column] = pd.NaT
+                elif column == "ads_launched":
+                    fallback_rows[column] = False
+                else:
+                    fallback_rows[column] = ""
+        total = pd.concat([total, fallback_rows[total.columns]], ignore_index=True)
     duplicate_asins = int(total.groupby("asin")["record_id"].nunique().gt(1).sum())
     asin_owner = total.sort_values(["asin", "record_id"]).drop_duplicates("asin", keep="first")
     attributed_asins = asin_owner.merge(
@@ -414,6 +464,7 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
         "cliparts": cliparts,
         "coverage": attributed_revenue / total_revenue if total_revenue else 0.0,
         "duplicate_asins": duplicate_asins,
+        "sku_fallback_count": sku_fallback_count,
     }
 
 
@@ -689,7 +740,11 @@ elif page.startswith("02"):
 
             quality_columns = st.columns(3)
             quality_columns[0].metric("ASIN mapping", f"{asin_coverage:.2%}", f"{len(selected_asins) - len(unmapped_asins):,} / {len(selected_asins):,} ASIN")
-            quality_columns[1].metric("Revenue mapping", f"{revenue_coverage:.2%}")
+            quality_columns[1].metric(
+                "Revenue mapping",
+                f"{revenue_coverage:.2%}",
+                f'{attribution.get("sku_fallback_count", 0):,} ASIN fallback từ SKU',
+            )
             quality_columns[2].metric("Unmapped ASIN", f"{len(unmapped_asins):,}")
 
             if unmapped_asins:
