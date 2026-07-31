@@ -711,6 +711,28 @@ elif page.startswith("02"):
         "Tải order report để gộp toàn bộ ASIN cùng sản phẩm theo Record ID từ Lark. "
         "Share được tính trên tổng Revenue của store đang chọn."
     )
+    config, missing_secrets = lark_config()
+    lark = None
+    if not missing_secrets:
+        with st.spinner("Đang kết nối Lark Base…"):
+            lark = cached_lark_frames(config)
+        image_candidates = (
+            lark["total"][["image_token", "image_field_id", "image_record_id"]]
+            .fillna("")
+            .drop_duplicates()
+        )
+        image_candidates = image_candidates[
+            image_candidates.astype(bool).all(axis=1)
+        ].head(3)
+        sample_image_references = tuple(
+            image_candidates.itertuples(index=False, name=None)
+        )
+        if sample_image_references:
+            sample_images = cached_product_images(config, sample_image_references)
+            st.caption(
+                f"Kết nối ảnh Lark: {len(sample_images)}/{len(sample_image_references)} "
+                "ảnh mẫu tải thành công qua API."
+            )
     product_uploads = {}
     upload_columns = st.columns(2)
     if store in {"All Stores", "Wrappiness"}:
@@ -736,12 +758,10 @@ elif page.startswith("02"):
             [aggregate_order_report(product_uploads[name], name) for name in required_product_stores],
             ignore_index=True,
         )
-        config, missing_secrets = lark_config()
         if missing_secrets:
             st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
         else:
-            with st.spinner("Đang map Record ID và ảnh từ Lark Base…"):
-                lark = cached_lark_frames(config)
+            assert lark is not None
             attribution = prepare_attribution(lark, store, product_performance)
             mapped_asins = set(attribution["total"]["asin"])
             selected_asins = set(product_performance["ASIN"])
