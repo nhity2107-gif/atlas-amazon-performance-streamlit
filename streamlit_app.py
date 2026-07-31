@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hmac
+
 import pandas as pd
 import streamlit as st
+
+from lark_data import LarkConfig, fetch_lark_frames
 
 
 st.set_page_config(
@@ -130,6 +134,10 @@ EMPLOYEES = {
     ],
 }
 
+REPORT_START = pd.Timestamp("2026-07-01")
+REPORT_END = pd.Timestamp("2026-07-31 23:59:59")
+COHORT_START = REPORT_START - pd.DateOffset(months=19)
+
 
 def money(value: float) -> str:
     return f"${value:,.0f}"
@@ -160,6 +168,326 @@ def active_store(store_name: str) -> dict:
             "fba_revenue", "fbm_revenue", "fba_orders", "fbm_orders",
         ]
     } | {"products": WR_PRODUCTS}
+
+
+def aggregate_order_report(uploaded_file, store_name: str) -> pd.DataFrame:
+    uploaded_file.seek(0)
+    frame = pd.read_csv(uploaded_file, sep="\t", dtype=str)
+    required = {
+        "purchase-date",
+        "order-status",
+        "currency",
+        "asin",
+        "item-price",
+        "shipping-price",
+        "quantity",
+        "amazon-order-id",
+    }
+    missing = sorted(required.difference(frame.columns))
+    if missing:
+        raise ValueError(f"Order report {store_name} thiếu cột: {', '.join(missing)}")
+    for column in ("item-price", "shipping-price", "quantity"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+    frame["purchase_date_pacific"] = (
+        pd.to_datetime(frame["purchase-date"], errors="coerce", utc=True)
+        .dt.tz_convert("America/Los_Angeles")
+    )
+    valid = frame[
+        frame["order-status"].fillna("").str.casefold().ne("cancelled")
+        & frame["currency"].eq("USD")
+        & frame["purchase_date_pacific"].dt.date.between(
+            REPORT_START.date(),
+            pd.Timestamp("2026-07-30").date(),
+        )
+    ].copy()
+    valid["Revenue"] = valid["item-price"] + valid["shipping-price"]
+    result = (
+        valid.groupby("asin", as_index=False)
+        .agg(
+            Revenue=("Revenue", "sum"),
+            Orders=("amazon-order-id", "nunique"),
+            Units=("quantity", "sum"),
+        )
+        .rename(columns={"asin": "ASIN"})
+    )
+    result["ASIN"] = result["ASIN"].astype(str).str.upper().str.strip()
+    result.insert(0, "Store", store_name)
+    return result
+
+
+def secret_value(name: str) -> str:
+    try:
+        return str(st.secrets.get(name, "")).strip()
+    except Exception:
+        return ""
+
+
+def lark_config() -> tuple[LarkConfig | None, list[str]]:
+    names = [
+        "LARK_APP_ID",
+        "LARK_APP_SECRET",
+        "LARK_BASE_TOKEN",
+        "LARK_TOTAL_ASIN_TABLE_ID",
+        "LARK_MRND_IDEA_TABLE_ID",
+        "LARK_CLIPARTS_TABLE_ID",
+    ]
+    values = {name: secret_value(name) for name in names}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        return None, missing
+    return (
+        LarkConfig(
+            app_id=values["LARK_APP_ID"],
+            app_secret=values["LARK_APP_SECRET"],
+            base_token=values["LARK_BASE_TOKEN"],
+            total_asin_table_id=values["LARK_TOTAL_ASIN_TABLE_ID"],
+            mrnd_idea_table_id=values["LARK_MRND_IDEA_TABLE_ID"],
+            cliparts_table_id=values["LARK_CLIPARTS_TABLE_ID"],
+        ),
+        [],
+    )
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cached_lark_frames(config: LarkConfig) -> dict:
+    return fetch_lark_frames(config)
+
+
+def in_report_month(series: pd.Series) -> pd.Series:
+    parsed = pd.to_datetime(series, errors="coerce")
+    return parsed.between(REPORT_START, REPORT_END)
+
+
+def first_nonempty(series: pd.Series) -> str:
+    for value in series:
+        if pd.notna(value) and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) -> dict:
+    total = lark["total"].copy()
+    ideas = lark["ideas"].copy()
+    cliparts = lark["cliparts"].copy()
+    performance = performance.copy()
+    if store_name != "All Stores":
+        performance = performance[performance["Store"].eq(store_name)]
+    asin_performance = (
+        performance.groupby("ASIN", as_index=False)
+        .agg(Revenue=("Revenue", "sum"), Orders=("Orders", "sum"), Units=("Units", "sum"))
+    )
+
+    if total.empty:
+        return {
+            "total": total,
+            "records": pd.DataFrame(),
+            "cliparts": cliparts,
+            "coverage": 0.0,
+            "duplicate_asins": 0,
+        }
+
+    total = total.drop_duplicates(["record_id", "asin"])
+    duplicate_asins = int(total.groupby("asin")["record_id"].nunique().gt(1).sum())
+    asin_owner = total.sort_values(["asin", "record_id"]).drop_duplicates("asin", keep="first")
+    attributed_asins = asin_owner.merge(
+        asin_performance,
+        left_on="asin",
+        right_on="ASIN",
+        how="left",
+    )
+    for column in ("Revenue", "Orders", "Units"):
+        attributed_asins[column] = attributed_asins[column].fillna(0)
+
+    owner_columns = ["managed_by", "custom_by", "ads_by", "ads_status"]
+    date_columns = [
+        "date_pickup",
+        "listing_done_date",
+        "ps_pickup_date",
+        "custom_done_date",
+        "custom_check_done_date",
+        "testing_start_date",
+    ]
+    aggregation = {
+        **{column: first_nonempty for column in owner_columns},
+        **{column: "min" for column in date_columns},
+        "ads_launched": "max",
+        "Revenue": "sum",
+        "Orders": "sum",
+        "Units": "sum",
+        "asin": "nunique",
+    }
+    records = attributed_asins.groupby("record_id", as_index=False).agg(aggregation)
+    records = records.rename(columns={"asin": "asin_count"})
+
+    if not ideas.empty:
+        idea_owner = (
+            ideas.sort_values("handover_date", na_position="last")
+            .groupby("record_id", as_index=False)
+            .agg(idea_by=("idea_by", first_nonempty), handover_date=("handover_date", "min"))
+        )
+        records = records.merge(idea_owner, on="record_id", how="left")
+    else:
+        records["idea_by"] = ""
+        records["handover_date"] = pd.NaT
+    records["idea_by"] = records["idea_by"].fillna("")
+
+    total_revenue = float(asin_performance["Revenue"].sum())
+    attributed_revenue = float(attributed_asins["Revenue"].sum())
+    return {
+        "total": total,
+        "records": records,
+        "attributed_asins": attributed_asins,
+        "cliparts": cliparts,
+        "coverage": attributed_revenue / total_revenue if total_revenue else 0.0,
+        "duplicate_asins": duplicate_asins,
+    }
+
+
+def employee_kpi_tables(attribution: dict, hero_threshold: float) -> dict[str, pd.DataFrame]:
+    records = attribution["records"].copy()
+    attributed_asins = attribution.get("attributed_asins", pd.DataFrame()).copy()
+    cliparts = attribution["cliparts"].copy()
+    if records.empty:
+        return {}
+
+    records["hero"] = records["Revenue"].ge(hero_threshold)
+    records["validated"] = records["Units"].ge(10)
+    records["listing_lead_days"] = (
+        records["listing_done_date"] - records["date_pickup"]
+    ).dt.total_seconds() / 86400
+    records["custom_lead_days"] = (
+        records["custom_done_date"] - records["listing_done_date"]
+    ).dt.total_seconds() / 86400
+    records["pd_check_days"] = (
+        records["custom_check_done_date"] - records["custom_done_date"]
+    ).dt.total_seconds() / 86400
+    records["ads_lead_days"] = (
+        records["testing_start_date"] - records["custom_check_done_date"]
+    ).dt.total_seconds() / 86400
+
+    def base_owner_frame(column: str) -> pd.DataFrame:
+        return records[records[column].fillna("").str.strip().ne("")].copy()
+
+    idea = base_owner_frame("idea_by")
+    idea_table = (
+        idea.groupby("idea_by", as_index=False)
+        .agg(
+            Qualified_Ideas=("record_id", "nunique"),
+            Validated_Records=("validated", "sum"),
+            Hero_Estimate=("hero", "sum"),
+            Revenue=("Revenue", "sum"),
+        )
+        .rename(columns={"idea_by": "Nhân sự"})
+    )
+    idea_table["Validated_Rate"] = (
+        idea_table["Validated_Records"] / idea_table["Qualified_Ideas"].where(
+            idea_table["Qualified_Ideas"].ne(0)
+        )
+    )
+
+    product_records = base_owner_frame("managed_by")
+    product_asins = attributed_asins[
+        attributed_asins["managed_by"].fillna("").str.strip().ne("")
+    ].copy()
+    product_asins["qualified"] = in_report_month(product_asins["custom_check_done_date"])
+    product_output = (
+        product_asins.groupby("managed_by", as_index=False)
+        .agg(Qualified_ASINs=("qualified", "sum"))
+        .rename(columns={"managed_by": "Nhân sự"})
+    )
+    product_table = (
+        product_records.groupby("managed_by", as_index=False)
+        .agg(
+            Portfolio_Records=("record_id", "nunique"),
+            Sold_Records=("validated", "sum"),
+            Portfolio_Revenue=("Revenue", "sum"),
+            Listing_Lead_Days=("listing_lead_days", "mean"),
+        )
+        .rename(columns={"managed_by": "Nhân sự"})
+        .merge(product_output, on="Nhân sự", how="left")
+    )
+    product_table["Qualified_ASINs"] = product_table["Qualified_ASINs"].fillna(0)
+    product_table["Sold_Rate"] = (
+        product_table["Sold_Records"]
+        / product_table["Portfolio_Records"].where(product_table["Portfolio_Records"].ne(0))
+    )
+
+    support_records = base_owner_frame("custom_by")
+    support_asins = attributed_asins[
+        attributed_asins["custom_by"].fillna("").str.strip().ne("")
+    ].copy()
+    support_asins["qualified"] = in_report_month(support_asins["custom_check_done_date"])
+    support_output = (
+        support_asins.groupby("custom_by", as_index=False)
+        .agg(Qualified_Custom_ASINs=("qualified", "sum"))
+        .rename(columns={"custom_by": "Nhân sự"})
+    )
+    support_table = (
+        support_records.groupby("custom_by", as_index=False)
+        .agg(
+            Portfolio_Records=("record_id", "nunique"),
+            Custom_Lead_Days=("custom_lead_days", "mean"),
+            PD_Check_Days=("pd_check_days", "mean"),
+        )
+        .rename(columns={"custom_by": "Nhân sự"})
+        .merge(support_output, on="Nhân sự", how="left")
+    )
+    support_table["Qualified_Custom_ASINs"] = support_table["Qualified_Custom_ASINs"].fillna(0)
+    if not cliparts.empty:
+        cliparts_month = cliparts[in_report_month(cliparts["created_date"])]
+        points = (
+            cliparts_month[cliparts_month["employee"].fillna("").str.strip().ne("")]
+            .groupby("employee", as_index=False)
+            .agg(Asset_Points=("asset_points", "sum"))
+            .rename(columns={"employee": "Nhân sự"})
+        )
+        support_table = support_table.merge(points, on="Nhân sự", how="left")
+    support_table["Asset_Points"] = support_table.get("Asset_Points", 0)
+    support_table["Asset_Points"] = support_table["Asset_Points"].fillna(0)
+
+    ads = base_owner_frame("ads_by")
+    ads["tested_in_month"] = in_report_month(ads["testing_start_date"])
+    ads_table = (
+        ads.groupby("ads_by", as_index=False)
+        .agg(
+            Ownership_Records=("record_id", "nunique"),
+            Launched_Records=("ads_launched", "sum"),
+            Ads_Tested=("tested_in_month", "sum"),
+            Hero_Estimate=("hero", "sum"),
+            Portfolio_Revenue=("Revenue", "sum"),
+        )
+        .rename(columns={"ads_by": "Nhân sự"})
+    )
+    ads_table["Testing_Coverage"] = (
+        ads_table["Launched_Records"]
+        / ads_table["Ownership_Records"].where(ads_table["Ownership_Records"].ne(0))
+    )
+    return {
+        "Idea": idea_table.sort_values("Revenue", ascending=False),
+        "Product Development": product_table.sort_values("Portfolio_Revenue", ascending=False),
+        "Product Support": support_table.sort_values("Qualified_Custom_ASINs", ascending=False),
+        "Ads Executive": ads_table.sort_values("Portfolio_Revenue", ascending=False),
+    }
+
+
+def team_access_granted() -> bool:
+    expected = secret_value("DASHBOARD_PASSWORD")
+    if not expected:
+        st.warning(
+            "Team KPI chứa dữ liệu nhân sự từ Lark. Hãy thêm DASHBOARD_PASSWORD "
+            "trong Streamlit Secrets để bật phần này an toàn trên app public."
+        )
+        return False
+    if st.session_state.get("team_authenticated"):
+        return True
+    password = st.text_input("Mật khẩu Team KPI", type="password")
+    if st.button("Mở Team KPI", type="primary"):
+        if hmac.compare_digest(password, expected):
+            st.session_state["team_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Mật khẩu không đúng.")
+    return False
 
 
 with st.sidebar:
@@ -268,59 +596,215 @@ elif page.startswith("03"):
     st.markdown("</div>", unsafe_allow_html=True)
 
 else:
-    st.markdown(
-        """
-        <div class="kpi-strip">
-          <div><span>Qualified Ideas</span><strong>120</strong><small>Unique Record ID</small></div>
-          <div><span>Listing Done</span><strong>284</strong><small>Product output</small></div>
-          <div><span>Custom Done</span><strong>324</strong><small>Support output</small></div>
-          <div><span>EBC Done</span><strong>41</strong><small>Asset delivery</small></div>
-          <div><span>Ads Tested</span><strong>18</strong><small>Testing Start recorded</small></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("## Team KPI · Record-level")
+    st.caption(
+        "Dữ liệu nhân sự lấy trực tiếp từ Lark Base. Revenue tháng 07/2026 được nối "
+        "từ ASIN của order report USD, đã loại Cancelled."
     )
-    lead_cols = st.columns(4)
-    lead_cols[0].metric("Listing lead time", "2.68 days")
-    lead_cols[1].metric("Custom lead time", "3.13 days")
-    lead_cols[2].metric("Ads lead time", "1.35 days")
-    lead_cols[3].metric("Testing coverage", "6.3%", "Estimate · 18 / 284")
+    if team_access_granted():
+        config, missing_secrets = lark_config()
+        if missing_secrets:
+            st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
+        else:
+            st.info(
+                "Order report được xử lý trong bộ nhớ của phiên đăng nhập và không được "
+                "lưu vào repository public."
+            )
+            upload_cols = st.columns(2)
+            with upload_cols[0]:
+                wrappiness_report = st.file_uploader(
+                    "Wrappiness · Order report tháng 07/2026",
+                    type=["txt", "tsv", "csv"],
+                    key="wrappiness_order_report",
+                )
+            with upload_cols[1]:
+                pawsionate_report = st.file_uploader(
+                    "Pawsionate · Order report tháng 07/2026",
+                    type=["txt", "tsv", "csv"],
+                    key="pawsionate_order_report",
+                )
+            required_uploads = {
+                "Wrappiness": wrappiness_report,
+                "Pawsionate": pawsionate_report,
+            }
+            selected_stores = (
+                ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
+            )
+            missing_reports = [
+                name for name in selected_stores if required_uploads[name] is None
+            ]
+            if missing_reports:
+                st.warning(
+                    "Hãy tải order report của: " + ", ".join(missing_reports)
+                    + ". Không cần tải lại report của store không được chọn."
+                )
+                st.stop()
+            performance = pd.concat(
+                [
+                    aggregate_order_report(required_uploads[name], name)
+                    for name in selected_stores
+                ],
+                ignore_index=True,
+            )
+            hero_threshold = st.number_input(
+                "Hero revenue threshold / Record ID",
+                min_value=0.0,
+                value=1000.0,
+                step=100.0,
+                help="Ngưỡng ước lượng Hero có thể đổi theo tình hình kinh doanh.",
+            )
+            try:
+                with st.spinner("Đang đồng bộ Lark Base…"):
+                    lark = cached_lark_frames(config)
+                attribution = prepare_attribution(lark, store, performance)
+                records = attribution["records"]
+                tables = employee_kpi_tables(attribution, hero_threshold)
 
-    team_specs = [
-        ("Idea", "idea", [("Qualified Ideas", "120"), ("Validated Rate", "Chờ sales ≥10"), ("Revenue", "Chờ Record ID map")]),
-        ("Product Development", "product", [("Qualified ASINs", "284"), ("Sold Rate", "Chờ cohort Flow 2"), ("Portfolio Revenue", "Chờ Record ID map")]),
-        ("Product Support", "support", [("Qualified Custom ASINs", "324"), ("Asset Points", "Chờ CLIPARTS detail"), ("Lead Time", "3.13 days")]),
-        ("Ads Executive", "ads", [("Ads Tested", "18"), ("Portfolio ACOS", "36.9%"), ("Testing Coverage", "6.3% est.")]),
-    ]
-    for row_start in range(0, 4, 2):
-        team_cols = st.columns(2)
-        for col, (name, tone, metrics) in zip(team_cols, team_specs[row_start:row_start + 2]):
-            with col:
-                rows = "".join(f'<div class="team-row"><span>{label}</span><b>{value}</b></div>' for label, value in metrics)
-                st.markdown(
-                    f'<div class="atlas-card team-card {tone}"><div class="atlas-eyebrow">TEAM KPI</div>'
-                    f'<h3>{name}</h3>{rows}</div>',
-                    unsafe_allow_html=True,
+                counts = lark["record_counts"]
+                st.success(
+                    "Lark API connected · "
+                    f'TOTAL ASIN {counts["TOTAL ASIN"]:,} records · '
+                    f'MRND IDEA {counts["MRND IDEA"]:,} records · '
+                    f'CLIPARTS {counts["CLIPARTS"]:,} records'
                 )
 
-    st.markdown("### Ownership output theo nhân sự")
-    for row_start in range(0, len(EMPLOYEES), 2):
-        employee_cols = st.columns(2)
-        for col, (title, rows) in zip(employee_cols, list(EMPLOYEES.items())[row_start:row_start + 2]):
-            with col:
-                frame = pd.DataFrame(rows, columns=["Nhân sự", "Output"]).set_index("Nhân sự")
-                st.markdown(f'<div class="atlas-card"><h3>{title}</h3>', unsafe_allow_html=True)
-                st.bar_chart(frame, color="#756ee9", horizontal=True, height=max(180, 42 * len(rows)))
-                st.markdown("</div>", unsafe_allow_html=True)
+                if records.empty:
+                    st.error(
+                        "API đã kết nối nhưng chưa tạo được mapping Record ID ↔ ASIN. "
+                        "Mở Field diagnostics bên dưới để kiểm tra tên cột."
+                    )
+                else:
+                    ads_tested = int(in_report_month(records["testing_start_date"]).sum())
+                    listing_done = int(in_report_month(records["listing_done_date"]).sum())
+                    custom_done = int(in_report_month(records["custom_check_done_date"]).sum())
+                    idea_done = int(in_report_month(records["handover_date"]).sum())
+                    if not idea_done:
+                        idea_done = int(records.loc[records["idea_by"].ne(""), "record_id"].nunique())
+                    cliparts_month = attribution["cliparts"][
+                        in_report_month(attribution["cliparts"]["created_date"])
+                    ]
+                    asset_total = int(cliparts_month["asset_points"].sum())
+                    launched = int(records["ads_launched"].sum())
+                    owned_ads = int(records.loc[records["ads_by"].ne(""), "record_id"].nunique())
+                    coverage = launched / owned_ads if owned_ads else 0
 
-    st.markdown(
-        """
-        <div class="pending"><b>Revenue attribution đang chờ quyền Lark record-level.</b><br>
-        Khi có quyền đọc API, hệ thống sẽ nối Record ID → ASIN → Idea By / Managed By /
-        Custom By / Ads By để điền Revenue, Sold Rate, Winner và testing coverage từng nhân sự.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+                    st.markdown(
+                        f"""
+                        <div class="kpi-strip">
+                          <div><span>Qualified Ideas</span><strong>{idea_done:,}</strong><small>Unique Record ID</small></div>
+                          <div><span>Listing Done</span><strong>{listing_done:,}</strong><small>Listing Done Date</small></div>
+                          <div><span>Custom Check Done</span><strong>{custom_done:,}</strong><small>Qualified Custom ASIN</small></div>
+                          <div><span>Asset Points</span><strong>{asset_total:,}</strong><small>CLIPARTS · July</small></div>
+                          <div><span>Ads Tested</span><strong>{ads_tested:,}</strong><small>Testing Start Date</small></div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                    listing_lead = (
+                        records["listing_done_date"] - records["date_pickup"]
+                    ).dt.total_seconds().div(86400).dropna()
+                    custom_lead = (
+                        records["custom_done_date"] - records["listing_done_date"]
+                    ).dt.total_seconds().div(86400).dropna()
+                    pd_check_lead = (
+                        records["custom_check_done_date"] - records["custom_done_date"]
+                    ).dt.total_seconds().div(86400).dropna()
+                    ads_lead = (
+                        records["testing_start_date"] - records["custom_check_done_date"]
+                    ).dt.total_seconds().div(86400).dropna()
+                    lead_cols = st.columns(5)
+                    lead_cols[0].metric(
+                        "Listing lead time",
+                        f"{listing_lead.mean():.2f} days" if not listing_lead.empty else "—",
+                    )
+                    lead_cols[1].metric(
+                        "PS lead time",
+                        f"{custom_lead.mean():.2f} days" if not custom_lead.empty else "—",
+                    )
+                    lead_cols[2].metric(
+                        "PD custom check",
+                        f"{pd_check_lead.mean():.2f} days" if not pd_check_lead.empty else "—",
+                    )
+                    lead_cols[3].metric(
+                        "Ads lead time",
+                        f"{ads_lead.mean():.2f} days" if not ads_lead.empty else "—",
+                    )
+                    lead_cols[4].metric(
+                        "Testing coverage",
+                        f"{coverage:.1%}",
+                        f"{launched:,} / {owned_ads:,} Record ID",
+                    )
+
+                    quality_cols = st.columns(3)
+                    quality_cols[0].metric(
+                        "Revenue mapped",
+                        f'{attribution["coverage"]:.1%}',
+                        "ASIN có Record ID trong TOTAL ASIN",
+                    )
+                    quality_cols[1].metric(
+                        "Attributed revenue",
+                        money(float(records["Revenue"].sum())),
+                        f"{records['record_id'].nunique():,} Record ID",
+                    )
+                    quality_cols[2].metric(
+                        "Hero estimate",
+                        f'{int(records["Revenue"].ge(hero_threshold).sum()):,}',
+                        f"Revenue ≥ {money(hero_threshold)}",
+                    )
+
+                    st.markdown("### KPI theo nhân sự")
+                    for title, table in tables.items():
+                        with st.expander(title, expanded=True):
+                            display = table.copy()
+                            integer_columns = [
+                                column
+                                for column in display.columns
+                                if column
+                                not in {
+                                    "Nhân sự",
+                                    "Revenue",
+                                    "Portfolio_Revenue",
+                                    "Validated_Rate",
+                                    "Sold_Rate",
+                                    "Testing_Coverage",
+                                    "Listing_Lead_Days",
+                                    "Custom_Lead_Days",
+                                    "PD_Check_Days",
+                                }
+                            ]
+                            for column in integer_columns:
+                                display[column] = display[column].fillna(0).round().astype(int)
+                            st.dataframe(
+                                display,
+                                hide_index=True,
+                                width="stretch",
+                                column_config={
+                                    "Revenue": st.column_config.NumberColumn(format="$%.2f"),
+                                    "Portfolio_Revenue": st.column_config.NumberColumn(format="$%.2f"),
+                                    "Validated_Rate": st.column_config.NumberColumn(format="%.1%%"),
+                                    "Sold_Rate": st.column_config.NumberColumn(format="%.1%%"),
+                                    "Testing_Coverage": st.column_config.ProgressColumn(
+                                        min_value=0, max_value=1, format="%.1%%"
+                                    ),
+                                    "Listing_Lead_Days": st.column_config.NumberColumn(format="%.2f"),
+                                    "Custom_Lead_Days": st.column_config.NumberColumn(format="%.2f"),
+                                    "PD_Check_Days": st.column_config.NumberColumn(format="%.2f"),
+                                },
+                            )
+
+                with st.expander("Field diagnostics"):
+                    st.json(lark["field_mapping"])
+                    if attribution["duplicate_asins"]:
+                        st.warning(
+                            f'{attribution["duplicate_asins"]} ASIN đang map tới nhiều Record ID; '
+                            "dashboard chỉ ghi nhận một Record ID để tránh nhân đôi Revenue."
+                        )
+            except Exception as exc:
+                st.error(f"Không thể đồng bộ Lark API: {exc}")
+                st.caption(
+                    "Kiểm tra app đã publish, quyền Base đã được cấp và App ID/App Secret "
+                    "trong Streamlit Secrets còn hiệu lực."
+                )
 
 st.caption("Atlas Performance OS · Internal dashboard · Order data as of 30 Jul 2026")
