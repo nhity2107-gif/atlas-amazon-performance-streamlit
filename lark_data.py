@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import time
 import unicodedata
 from typing import Any, Iterable
 
@@ -239,6 +240,75 @@ class LarkClient:
                 break
         return records
 
+    def list_field_names(self, base_token: str, table_id: str) -> list[str]:
+        names: list[str] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            response = self.session.get(
+                f"https://open.larksuite.com/open-apis/bitable/v1/apps/{base_token}/tables/{table_id}/fields",
+                headers={"Authorization": f"Bearer {self.tenant_token()}"},
+                params=params,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("code") != 0:
+                raise LarkAPIError(payload.get("msg") or f"Unable to read fields for {table_id}")
+            data = payload.get("data") or {}
+            for field in data.get("items") or []:
+                name = field.get("field_name")
+                if name and name not in names:
+                    names.append(name)
+            if not data.get("has_more"):
+                break
+            page_token = data.get("page_token")
+            if not page_token:
+                break
+        return names
+
+    def search_records(
+        self,
+        base_token: str,
+        table_id: str,
+        field_names: Iterable[str],
+    ) -> list[dict[str, Any]]:
+        """Read only KPI columns, avoiding expensive unrelated formula fields."""
+        selected_fields = list(dict.fromkeys(name for name in field_names if name))
+        records: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"page_size": 500}
+            if page_token:
+                params["page_token"] = page_token
+            response = None
+            for attempt in range(3):
+                response = self.session.post(
+                    f"https://open.larksuite.com/open-apis/bitable/v1/apps/{base_token}/tables/{table_id}/records/search",
+                    headers={"Authorization": f"Bearer {self.tenant_token()}"},
+                    params=params,
+                    json={"field_names": selected_fields, "automatic_fields": False},
+                    timeout=self.timeout,
+                )
+                if response.status_code not in {429, 502, 503, 504}:
+                    break
+                time.sleep(1.5 * (attempt + 1))
+            assert response is not None
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("code") != 0:
+                raise LarkAPIError(payload.get("msg") or f"Unable to search Lark table {table_id}")
+            data = payload.get("data") or {}
+            records.extend(data.get("items") or [])
+            if not data.get("has_more"):
+                break
+            page_token = data.get("page_token")
+            if not page_token:
+                break
+        return records
+
 
 def resolve_fields(records: list[dict[str, Any]], aliases: dict[str, list[str]]) -> dict[str, str | None]:
     names: list[str] = []
@@ -247,6 +317,13 @@ def resolve_fields(records: list[dict[str, Any]], aliases: dict[str, list[str]])
             if name not in names:
                 names.append(name)
     return {key: find_field_name(names, candidates) for key, candidates in aliases.items()}
+
+
+def resolve_field_names(
+    field_names: Iterable[str],
+    aliases: dict[str, list[str]],
+) -> dict[str, str | None]:
+    return {key: find_field_name(field_names, candidates) for key, candidates in aliases.items()}
 
 
 def total_asin_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str, str | None]]:
@@ -332,9 +409,27 @@ def clipart_frame(records: list[dict[str, Any]]) -> tuple[pd.DataFrame, dict[str
 
 def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
     client = LarkClient(config.app_id, config.app_secret)
-    total_records = client.list_records(config.base_token, config.total_asin_table_id)
-    idea_records = client.list_records(config.base_token, config.mrnd_idea_table_id)
-    clipart_records = client.list_records(config.base_token, config.cliparts_table_id)
+    table_specs = {
+        "total": (config.total_asin_table_id, TOTAL_ASIN_ALIASES),
+        "ideas": (config.mrnd_idea_table_id, IDEA_ALIASES),
+        "cliparts": (config.cliparts_table_id, CLIPART_ALIASES),
+    }
+    records_by_table: dict[str, list[dict[str, Any]]] = {}
+    for key, (table_id, aliases) in table_specs.items():
+        field_names = client.list_field_names(config.base_token, table_id)
+        mapping = resolve_field_names(field_names, aliases)
+        selected_fields = [name for name in mapping.values() if name]
+        if not selected_fields:
+            raise LarkAPIError(f"No KPI fields found in Lark table {table_id}")
+        records_by_table[key] = client.search_records(
+            config.base_token,
+            table_id,
+            selected_fields,
+        )
+
+    total_records = records_by_table["total"]
+    idea_records = records_by_table["ideas"]
+    clipart_records = records_by_table["cliparts"]
     total, total_mapping = total_asin_frame(total_records)
     ideas, idea_mapping = idea_frame(idea_records)
     cliparts, clipart_mapping = clipart_frame(clipart_records)
