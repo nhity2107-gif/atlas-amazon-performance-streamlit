@@ -259,6 +259,14 @@ def in_report_month(series: pd.Series) -> pd.Series:
     return parsed.between(REPORT_START, REPORT_END)
 
 
+def workflow_lead_days(start: pd.Series, end: pd.Series) -> pd.Series:
+    """Return valid stage lead times completed in the reporting month."""
+    start_dates = pd.to_datetime(start, errors="coerce")
+    end_dates = pd.to_datetime(end, errors="coerce")
+    lead = (end_dates - start_dates).dt.total_seconds().div(86400)
+    return lead.where(in_report_month(end_dates) & lead.ge(0))
+
+
 def first_nonempty(series: pd.Series) -> str:
     for value in series:
         if pd.notna(value) and str(value).strip():
@@ -353,28 +361,30 @@ def employee_kpi_tables(attribution: dict, hero_threshold: float) -> dict[str, p
 
     records["hero"] = records["Revenue"].ge(hero_threshold)
     records["validated"] = records["Units"].ge(10)
-    records["listing_lead_days"] = (
-        records["listing_done_date"] - records["date_pickup"]
-    ).dt.total_seconds() / 86400
-    records["custom_lead_days"] = (
-        records["custom_done_date"] - records["listing_done_date"]
-    ).dt.total_seconds() / 86400
-    records["pd_check_days"] = (
-        records["custom_check_done_date"] - records["custom_done_date"]
-    ).dt.total_seconds() / 86400
-    records["ads_lead_days"] = (
-        records["testing_start_date"] - records["custom_check_done_date"]
-    ).dt.total_seconds() / 86400
+    records["listing_lead_days"] = workflow_lead_days(
+        records["date_pickup"], records["listing_done_date"]
+    )
+    records["custom_lead_days"] = workflow_lead_days(
+        records["listing_done_date"], records["custom_done_date"]
+    )
+    records["pd_check_days"] = workflow_lead_days(
+        records["custom_done_date"], records["custom_check_done_date"]
+    )
+    records["ads_lead_days"] = workflow_lead_days(
+        records["custom_check_done_date"], records["testing_start_date"]
+    )
 
     def base_owner_frame(column: str) -> pd.DataFrame:
         return records[records[column].fillna("").str.strip().ne("")].copy()
 
     idea = base_owner_frame("idea_by")
+    idea["qualified"] = in_report_month(idea["handover_date"])
+    idea["validated_idea"] = idea["qualified"] & idea["validated"]
     idea_table = (
         idea.groupby("idea_by", as_index=False)
         .agg(
-            Qualified_Ideas=("record_id", "nunique"),
-            Validated_Records=("validated", "sum"),
+            Qualified_Ideas=("qualified", "sum"),
+            Validated_Records=("validated_idea", "sum"),
             Hero_Estimate=("hero", "sum"),
             Revenue=("Revenue", "sum"),
         )
@@ -702,18 +712,18 @@ else:
                         unsafe_allow_html=True,
                     )
 
-                    listing_lead = (
-                        records["listing_done_date"] - records["date_pickup"]
-                    ).dt.total_seconds().div(86400).dropna()
-                    custom_lead = (
-                        records["custom_done_date"] - records["listing_done_date"]
-                    ).dt.total_seconds().div(86400).dropna()
-                    pd_check_lead = (
-                        records["custom_check_done_date"] - records["custom_done_date"]
-                    ).dt.total_seconds().div(86400).dropna()
-                    ads_lead = (
-                        records["testing_start_date"] - records["custom_check_done_date"]
-                    ).dt.total_seconds().div(86400).dropna()
+                    listing_lead = workflow_lead_days(
+                        records["date_pickup"], records["listing_done_date"]
+                    ).dropna()
+                    custom_lead = workflow_lead_days(
+                        records["listing_done_date"], records["custom_done_date"]
+                    ).dropna()
+                    pd_check_lead = workflow_lead_days(
+                        records["custom_done_date"], records["custom_check_done_date"]
+                    ).dropna()
+                    ads_lead = workflow_lead_days(
+                        records["custom_check_done_date"], records["testing_start_date"]
+                    ).dropna()
                     lead_cols = st.columns(5)
                     lead_cols[0].metric(
                         "Listing lead time",
