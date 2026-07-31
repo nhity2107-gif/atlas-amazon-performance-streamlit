@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from lark_data import LarkConfig, fetch_lark_frames
+from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames
 
 
 st.set_page_config(
@@ -322,9 +322,17 @@ def lark_config() -> tuple[LarkConfig | None, list[str]]:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v5") -> dict:
+def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v6") -> dict:
     del schema_version
     return fetch_lark_frames(config)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_product_images(
+    config: LarkConfig,
+    references: tuple[tuple[str, str, str], ...],
+) -> dict[str, str]:
+    return fetch_image_data_urls(config, references)
 
 
 def in_report_month(series: pd.Series) -> pd.Series:
@@ -433,6 +441,9 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
         **{column: first_nonempty for column in owner_columns},
         "product_name": first_nonempty,
         "image_url": first_nonempty,
+        "image_token": first_nonempty,
+        "image_record_id": first_nonempty,
+        "image_field_id": first_nonempty,
         **{column: "min" for column in date_columns},
         "ads_launched": "max",
         "Revenue": "sum",
@@ -776,6 +787,18 @@ elif page.startswith("02"):
 
             products = attribution["records"].copy()
             products = products[products["Revenue"].gt(0)].sort_values("Revenue", ascending=False)
+            source_image_urls = products["image_url"].copy()
+            image_references = tuple(
+                products[["image_token", "image_field_id", "image_record_id"]]
+                .fillna("")
+                .itertuples(index=False, name=None)
+            )
+            image_data_urls = cached_product_images(config, image_references)
+            products["image_url"] = products["image_token"].map(image_data_urls).fillna("")
+            products["image_url"] = products["image_url"].where(
+                products["image_url"].ne(""),
+                source_image_urls,
+            )
             total_revenue = float(product_performance["Revenue"].sum())
             products["Share"] = products["Revenue"].div(total_revenue if total_revenue else 1).mul(100)
             products.insert(0, "#", range(1, len(products) + 1))

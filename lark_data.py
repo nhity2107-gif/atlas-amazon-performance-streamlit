@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+import json
 import re
 import time
 import unicodedata
@@ -146,6 +148,24 @@ def first_url(value: Any) -> str:
     return ""
 
 
+def first_file_token(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            token = first_file_token(item)
+            if token:
+                return token
+        return ""
+    if isinstance(value, dict):
+        token = value.get("file_token")
+        if isinstance(token, str) and token:
+            return token
+        for item in value.values():
+            token = first_file_token(item)
+            if token:
+                return token
+    return ""
+
+
 def identifiers(value: Any, pattern: re.Pattern[str]) -> list[str]:
     found: list[str] = []
     for text in text_values(value):
@@ -225,6 +245,7 @@ class LarkClient:
         self.timeout = timeout
         self.session = requests.Session()
         self._tenant_token: str | None = None
+        self.field_ids: dict[tuple[str, str], str] = {}
 
     def tenant_token(self) -> str:
         if self._tenant_token:
@@ -289,6 +310,8 @@ class LarkClient:
                 name = field.get("field_name")
                 if name and name not in names:
                     names.append(name)
+                if name and field.get("field_id"):
+                    self.field_ids[(table_id, name)] = field["field_id"]
             if not data.get("has_more"):
                 break
             page_token = data.get("page_token")
@@ -336,6 +359,34 @@ class LarkClient:
                 break
         return records
 
+    def download_bitable_media(
+        self,
+        file_token: str,
+        table_id: str,
+        field_id: str,
+        record_id: str,
+    ) -> str:
+        extra = json.dumps(
+            {
+                "bitablePerm": {
+                    "tableId": table_id,
+                    "attachments": {field_id: {record_id: [file_token]}},
+                }
+            },
+            separators=(",", ":"),
+        )
+        response = self.session.get(
+            f"https://open.larksuite.com/open-apis/drive/v1/media/{file_token}/download",
+            headers={"Authorization": f"Bearer {self.tenant_token()}"},
+            params={"extra": extra},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        mime_type = response.headers.get("Content-Type", "image/jpeg").split(";", 1)[0]
+        if not mime_type.startswith("image/"):
+            return ""
+        return f"data:{mime_type};base64,{base64.b64encode(response.content).decode('ascii')}"
+
 
 def resolve_fields(records: list[dict[str, Any]], aliases: dict[str, list[str]]) -> dict[str, str | None]:
     names: list[str] = []
@@ -356,6 +407,7 @@ def resolve_field_names(
 def total_asin_frame(
     records: list[dict[str, Any]],
     mapping_override: dict[str, str | None] | None = None,
+    image_field_id: str = "",
 ) -> tuple[pd.DataFrame, dict[str, str | None]]:
     mapping = mapping_override or resolve_fields(records, TOTAL_ASIN_ALIASES)
     rows: list[dict[str, Any]] = []
@@ -378,6 +430,11 @@ def total_asin_frame(
                 row["image_url"] = (
                     first_url(fields.get(mapping["image"])) if mapping.get("image") else ""
                 )
+                row["image_token"] = (
+                    first_file_token(fields.get(mapping["image"])) if mapping.get("image") else ""
+                )
+                row["image_record_id"] = str(record.get("record_id") or "")
+                row["image_field_id"] = image_field_id
                 for owner in ("managed_by", "custom_by", "ads_by", "ads_status"):
                     row[owner] = display_value(fields.get(mapping[owner])) if mapping[owner] else ""
                 for date_name in (
@@ -396,6 +453,9 @@ def total_asin_frame(
         "asin",
         "product_name",
         "image_url",
+        "image_token",
+        "image_record_id",
+        "image_field_id",
         "managed_by",
         "custom_by",
         "ads_by",
@@ -492,7 +552,17 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
     total_records = records_by_table["total"]
     idea_records = records_by_table["ideas"]
     clipart_records = records_by_table["cliparts"]
-    total, total_mapping = total_asin_frame(total_records, preflight_mapping["total"])
+    image_field_name = preflight_mapping["total"].get("image")
+    image_field_id = (
+        client.field_ids.get((config.total_asin_table_id, image_field_name), "")
+        if image_field_name
+        else ""
+    )
+    total, total_mapping = total_asin_frame(
+        total_records,
+        preflight_mapping["total"],
+        image_field_id,
+    )
     ideas, idea_mapping = idea_frame(idea_records, preflight_mapping["ideas"])
     cliparts, clipart_mapping = clipart_frame(
         clipart_records,
@@ -518,3 +588,28 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
             "CLIPARTS": available_fields["cliparts"],
         },
     }
+
+
+def fetch_image_data_urls(
+    config: LarkConfig,
+    references: Iterable[tuple[str, str, str]],
+    limit: int = 25,
+) -> dict[str, str]:
+    client = LarkClient(config.app_id, config.app_secret)
+    images: dict[str, str] = {}
+    for file_token, field_id, record_id in list(dict.fromkeys(references))[:limit]:
+        if not file_token or not field_id or not record_id:
+            continue
+        try:
+            data_url = client.download_bitable_media(
+                file_token,
+                config.total_asin_table_id,
+                field_id,
+                record_id,
+            )
+        except (requests.RequestException, LarkAPIError):
+            continue
+        if data_url:
+            images[file_token] = data_url
+        time.sleep(0.22)
+    return images
