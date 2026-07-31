@@ -29,7 +29,10 @@ LAUNCHED_ADS_STATUSES = {
 
 TOTAL_ASIN_ALIASES = {
     "record_id": ["Record ID", "RecordID", "Product Record ID"],
+    "internal_record_id": ["_record_id"],
     "asin": ["ASIN", "ASINs", "Amazon ASIN"],
+    "product_name": ["Product Name", "Amazon Title"],
+    "image": ["Image", "Product Image"],
     "managed_by": ["Managed By", "Manage By", "Listing By"],
     "custom_by": ["Custom By", "PS By", "Product Support"],
     "ads_by": ["Ads By", "Ads Executive"],
@@ -120,6 +123,27 @@ def display_value(value: Any) -> str:
         if text and text not in seen:
             seen.append(text)
     return " / ".join(seen)
+
+
+def first_url(value: Any) -> str:
+    if isinstance(value, str):
+        return value if value.startswith(("http://", "https://")) else ""
+    if isinstance(value, list):
+        for item in value:
+            url = first_url(item)
+            if url:
+                return url
+        return ""
+    if isinstance(value, dict):
+        for key in ("tmp_url", "url", "link", "download_url"):
+            url = value.get(key)
+            if isinstance(url, str) and url.startswith(("http://", "https://")):
+                return url
+        for item in value.values():
+            url = first_url(item)
+            if url:
+                return url
+    return ""
 
 
 def identifiers(value: Any, pattern: re.Pattern[str]) -> list[str]:
@@ -338,10 +362,22 @@ def total_asin_frame(
     for record in records:
         fields = record.get("fields") or {}
         record_ids = identifiers(fields.get(mapping["record_id"]), RECORD_ID_PATTERN) if mapping["record_id"] else []
+        if not record_ids and mapping.get("internal_record_id"):
+            record_ids = identifiers(fields.get(mapping["internal_record_id"]), RECORD_ID_PATTERN)
+        if not record_ids:
+            record_ids = identifiers(record.get("record_id"), RECORD_ID_PATTERN)
         asins = identifiers(fields.get(mapping["asin"]), ASIN_PATTERN) if mapping["asin"] else []
         for record_id in record_ids:
             for asin in asins:
                 row: dict[str, Any] = {"record_id": record_id, "asin": asin}
+                row["product_name"] = (
+                    display_value(fields.get(mapping["product_name"]))
+                    if mapping.get("product_name")
+                    else ""
+                )
+                row["image_url"] = (
+                    first_url(fields.get(mapping["image"])) if mapping.get("image") else ""
+                )
                 for owner in ("managed_by", "custom_by", "ads_by", "ads_status"):
                     row[owner] = display_value(fields.get(mapping[owner])) if mapping[owner] else ""
                 for date_name in (
@@ -358,6 +394,8 @@ def total_asin_frame(
     columns = [
         "record_id",
         "asin",
+        "product_name",
+        "image_url",
         "managed_by",
         "custom_by",
         "ads_by",

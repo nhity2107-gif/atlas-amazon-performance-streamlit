@@ -3,6 +3,8 @@ from __future__ import annotations
 import hmac
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from lark_data import LarkConfig, fetch_lark_frames
@@ -117,6 +119,19 @@ ADS = {
     "Pawsionate": dict(spend=152.17, sales=342.68, orders=8, impressions=25919, clicks=224),
 }
 
+ADS_BY_TYPE = {
+    "Wrappiness": {
+        "SP": dict(spend=34041.91, sales=92526.08, orders=2779, impressions=3273038, clicks=41630),
+        "SB": dict(spend=2631.74, sales=6854.06, orders=249, impressions=414301, clicks=4811),
+        "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=70, clicks=0),
+    },
+    "Pawsionate": {
+        "SP": dict(spend=152.17, sales=342.68, orders=8, impressions=25919, clicks=224),
+        "SB": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
+        "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
+    },
+}
+
 EMPLOYEES = {
     "Idea By": [("Gary / Minh Hiếu / MRnD", 120)],
     "Listing By": [
@@ -141,6 +156,54 @@ COHORT_START = REPORT_START - pd.DateOffset(months=19)
 
 def money(value: float) -> str:
     return f"${value:,.0f}"
+
+
+def donut_chart(frame: pd.DataFrame, names: str, values: str, colors: list[str], height: int = 260):
+    figure = px.pie(
+        frame,
+        names=names,
+        values=values,
+        hole=0.58,
+        color_discrete_sequence=colors,
+    )
+    figure.update_traces(
+        textposition="inside",
+        texttemplate="%{label}<br>%{percent:.2%}",
+        hovertemplate="%{label}<br>$%{value:,.2f}<br>%{percent:.2%}<extra></extra>",
+        marker={"line": {"color": "#ffffff", "width": 2}},
+    )
+    figure.update_layout(
+        height=height,
+        margin={"l": 8, "r": 8, "t": 8, "b": 8},
+        showlegend=True,
+        legend={"orientation": "h", "y": -0.08, "x": 0.5, "xanchor": "center"},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    return figure
+
+
+def ads_type_frame(store_name: str) -> pd.DataFrame:
+    stores = list(ADS_BY_TYPE) if store_name == "All Stores" else [store_name]
+    rows = []
+    for ads_type in ("SP", "SB", "SD"):
+        row = {
+            metric: sum(ADS_BY_TYPE[name][ads_type][metric] for name in stores)
+            for metric in ("spend", "sales", "orders", "impressions", "clicks")
+        }
+        row["Ads Type"] = ads_type
+        rows.append(row)
+    frame = pd.DataFrame(rows)
+    total_spend = float(frame["spend"].sum())
+    total_sales = float(frame["sales"].sum())
+    frame["Spend Share"] = frame["spend"].div(total_spend if total_spend else 1)
+    frame["Sales Share"] = frame["sales"].div(total_sales if total_sales else 1)
+    frame["ACOS"] = frame["spend"].div(frame["sales"].where(frame["sales"].ne(0)))
+    frame["ROAS"] = frame["sales"].div(frame["spend"].where(frame["spend"].ne(0)))
+    frame["CPC"] = frame["spend"].div(frame["clicks"].where(frame["clicks"].ne(0)))
+    frame["CVR"] = frame["orders"].div(frame["clicks"].where(frame["clicks"].ne(0)))
+    frame["CTR"] = frame["clicks"].div(frame["impressions"].where(frame["impressions"].ne(0)))
+    return frame
 
 
 def daily_frame(store_name: str) -> pd.DataFrame:
@@ -249,7 +312,7 @@ def lark_config() -> tuple[LarkConfig | None, list[str]]:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v3") -> dict:
+def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v4") -> dict:
     del schema_version
     return fetch_lark_frames(config)
 
@@ -318,6 +381,8 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
     ]
     aggregation = {
         **{column: first_nonempty for column in owner_columns},
+        "product_name": first_nonempty,
+        "image_url": first_nonempty,
         **{column: "min" for column in date_columns},
         "ads_launched": "max",
         "Revenue": "sum",
@@ -549,39 +614,149 @@ if page.startswith("01"):
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         fulfillment = pd.DataFrame(
-            {"Revenue": [data["fbm_revenue"], data["fba_revenue"]]},
-            index=["FBM", "FBA"],
+            {
+                "Fulfillment": ["FBM", "FBA"],
+                "Revenue": [data["fbm_revenue"], data["fba_revenue"]],
+            }
         )
         st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">FULFILLMENT</div><h3>Revenue split</h3>', unsafe_allow_html=True)
-        st.bar_chart(fulfillment, color="#756ee9", horizontal=True, height=230)
+        st.plotly_chart(
+            donut_chart(fulfillment, "Fulfillment", "Revenue", ["#756ee9", "#ff9d5c"], 245),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
         st.caption(f'{data["fbm_orders"]:,} FBM orders · {data["fba_orders"]:,} FBA orders')
         st.markdown("</div>", unsafe_allow_html=True)
 
     if store == "All Stores":
         store_share = pd.DataFrame(
-            {"Revenue": [STORES["Wrappiness"]["revenue"], STORES["Pawsionate"]["revenue"]]},
-            index=["Wrappiness", "Pawsionate"],
+            {
+                "Store": ["Wrappiness", "Pawsionate"],
+                "Revenue": [STORES["Wrappiness"]["revenue"], STORES["Pawsionate"]["revenue"]],
+            }
         )
         st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">REVENUE BY STORE</div><h3>Tỷ trọng Revenue hai store</h3>', unsafe_allow_html=True)
-        st.bar_chart(store_share, color="#40b6c8", horizontal=True, height=220)
+        st.plotly_chart(
+            donut_chart(store_share, "Store", "Revenue", ["#40b6c8", "#ff9d5c"], 285),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page.startswith("02"):
-    products = pd.DataFrame(
-        data["products"], columns=["ASIN", "Revenue", "Orders", "Units"]
+    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Top sản phẩm theo Record ID</h3></div>', unsafe_allow_html=True)
+    st.caption(
+        "Tải order report để gộp toàn bộ ASIN cùng sản phẩm theo Record ID từ Lark. "
+        "Share được tính trên tổng Revenue của store đang chọn."
     )
-    products.insert(0, "#", range(1, len(products) + 1))
-    products["Share"] = products["Revenue"] / products["Revenue"].sum()
-    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Top ASIN theo Revenue</h3></div>', unsafe_allow_html=True)
-    st.dataframe(
-        products,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "Revenue": st.column_config.NumberColumn(format="$%.2f"),
-            "Share": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.1%%"),
-        },
+    product_uploads = {}
+    upload_columns = st.columns(2)
+    if store in {"All Stores", "Wrappiness"}:
+        with upload_columns[0]:
+            product_uploads["Wrappiness"] = st.file_uploader(
+                "Wrappiness · Order report",
+                type=["txt", "tsv", "csv"],
+                key="product_wr_order",
+            )
+    if store in {"All Stores", "Pawsionate"}:
+        with upload_columns[1]:
+            product_uploads["Pawsionate"] = st.file_uploader(
+                "Pawsionate · Order report",
+                type=["txt", "tsv", "csv"],
+                key="product_paw_order",
+            )
+
+    required_product_stores = (
+        ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
     )
+    if all(product_uploads.get(name) is not None for name in required_product_stores):
+        product_performance = pd.concat(
+            [aggregate_order_report(product_uploads[name], name) for name in required_product_stores],
+            ignore_index=True,
+        )
+        config, missing_secrets = lark_config()
+        if missing_secrets:
+            st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
+        else:
+            with st.spinner("Đang map Record ID và ảnh từ Lark Base…"):
+                lark = cached_lark_frames(config)
+            attribution = prepare_attribution(lark, store, product_performance)
+            mapped_asins = set(attribution["total"]["asin"])
+            selected_asins = set(product_performance["ASIN"])
+            unmapped_asins = selected_asins.difference(mapped_asins)
+            asin_coverage = 1 - len(unmapped_asins) / len(selected_asins) if selected_asins else 0
+            revenue_coverage = attribution["coverage"]
+
+            quality_columns = st.columns(3)
+            quality_columns[0].metric("ASIN mapping", f"{asin_coverage:.2%}", f"{len(selected_asins) - len(unmapped_asins):,} / {len(selected_asins):,} ASIN")
+            quality_columns[1].metric("Revenue mapping", f"{revenue_coverage:.2%}")
+            quality_columns[2].metric("Unmapped ASIN", f"{len(unmapped_asins):,}")
+
+            if unmapped_asins:
+                st.error(
+                    "Mapping chưa đạt 100%. Các ASIN bên dưới chưa tồn tại trong TOTAL ASIN "
+                    "hoặc chưa có Record ID hợp lệ. Cập nhật Lark rồi tải lại để đạt 100%."
+                )
+                unmapped = (
+                    product_performance[product_performance["ASIN"].isin(unmapped_asins)]
+                    .groupby(["Store", "ASIN"], as_index=False)
+                    .agg(Revenue=("Revenue", "sum"), Orders=("Orders", "sum"), Units=("Units", "sum"))
+                    .sort_values("Revenue", ascending=False)
+                )
+                with st.expander("Danh sách ASIN chưa map", expanded=False):
+                    st.dataframe(
+                        unmapped,
+                        hide_index=True,
+                        width="stretch",
+                        column_config={"Revenue": st.column_config.NumberColumn(format="$%.2f")},
+                    )
+                    st.download_button(
+                        "Tải CSV ASIN chưa map",
+                        unmapped.to_csv(index=False).encode("utf-8-sig"),
+                        "unmapped_asins_july_2026.csv",
+                        "text/csv",
+                    )
+            else:
+                st.success("Mapping đạt 100%: toàn bộ ASIN có Record ID trong TOTAL ASIN.")
+
+            products = attribution["records"].copy()
+            products = products[products["Revenue"].gt(0)].sort_values("Revenue", ascending=False)
+            total_revenue = float(product_performance["Revenue"].sum())
+            products["Share"] = products["Revenue"].div(total_revenue if total_revenue else 1).mul(100)
+            products.insert(0, "#", range(1, len(products) + 1))
+            products = products.rename(
+                columns={
+                    "record_id": "Record ID",
+                    "product_name": "Product",
+                    "image_url": "Image",
+                    "asin_count": "ASIN count",
+                }
+            )
+            st.dataframe(
+                products[["#", "Image", "Record ID", "Product", "ASIN count", "Revenue", "Orders", "Units", "Share"]].head(50),
+                hide_index=True,
+                width="stretch",
+                row_height=64,
+                column_config={
+                    "Image": st.column_config.ImageColumn(width="small"),
+                    "Revenue": st.column_config.NumberColumn(format="$%.2f"),
+                    "Share": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.2f%%"),
+                },
+            )
+    else:
+        products = pd.DataFrame(data["products"], columns=["ASIN", "Revenue", "Orders", "Units"])
+        products.insert(0, "#", range(1, len(products) + 1))
+        products["Share"] = products["Revenue"].div(data["revenue"] or 1).mul(100)
+        st.info("Tải đủ order report để gộp theo Record ID và kiểm tra mapping 100%.")
+        st.dataframe(
+            products,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Revenue": st.column_config.NumberColumn(format="$%.2f"),
+                "Share": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.2f%%"),
+            },
+        )
 
 elif page.startswith("03"):
     if store == "All Stores":
@@ -594,17 +769,88 @@ elif page.startswith("03"):
     cols[2].metric("ACOS", f'{ads["spend"] / ads["sales"] * 100:.1f}%', f'ROAS {ads["sales"] / ads["spend"]:.2f}')
     cols[3].metric("Ad orders", f'{ads["orders"]:,}', f'{ads["orders"] / ads["clicks"] * 100:.1f}% CVR')
     funnel = pd.DataFrame(
-        {"Volume": [ads["impressions"], ads["clicks"], ads["orders"]]},
-        index=["Impressions", "Clicks", "Orders"],
+        {"Stage": ["Impressions", "Clicks", "PPC Orders"], "Volume": [ads["impressions"], ads["clicks"], ads["orders"]]}
     )
     st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">ADS FUNNEL</div><h3>Traffic đến conversion</h3>', unsafe_allow_html=True)
-    st.bar_chart(funnel, color="#756ee9", horizontal=True, height=300)
+    funnel_figure = go.Figure(
+        go.Funnel(
+            y=funnel["Stage"],
+            x=funnel["Volume"],
+            texttemplate="%{label}<br>%{value:,.0f}<br>%{percentInitial:.2%}",
+            marker={"color": ["#756ee9", "#8f88f4", "#ff9d5c"]},
+            connector={"line": {"color": "#d8dce5", "width": 1}},
+            hovertemplate="%{label}: %{value:,.0f}<extra></extra>",
+        )
+    )
+    funnel_figure.update_layout(
+        height=330,
+        margin={"l": 16, "r": 16, "t": 12, "b": 12},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(funnel_figure, width="stretch", config={"displayModeBar": False})
     st.caption(
         f'CTR {ads["clicks"] / ads["impressions"] * 100:.2f}% · '
         f'CVR {ads["orders"] / ads["clicks"] * 100:.2f}% · '
         f'CPC ${ads["spend"] / ads["clicks"]:.2f}'
     )
     st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">CAMPAIGN TYPE PERFORMANCE</div><h3>Hiệu quả theo Ads Type · SP / SB / SD</h3></div>', unsafe_allow_html=True)
+    type_performance = ads_type_frame(store)
+    total_row = pd.DataFrame(
+        [
+            {
+                "Ads Type": "Total",
+                "spend": type_performance["spend"].sum(),
+                "sales": type_performance["sales"].sum(),
+                "orders": type_performance["orders"].sum(),
+                "impressions": type_performance["impressions"].sum(),
+                "clicks": type_performance["clicks"].sum(),
+                "Spend Share": 1.0,
+                "Sales Share": 1.0,
+            }
+        ]
+    )
+    total_row["ACOS"] = total_row["spend"].div(total_row["sales"].where(total_row["sales"].ne(0)))
+    total_row["ROAS"] = total_row["sales"].div(total_row["spend"].where(total_row["spend"].ne(0)))
+    total_row["CPC"] = total_row["spend"].div(total_row["clicks"].where(total_row["clicks"].ne(0)))
+    total_row["CVR"] = total_row["orders"].div(total_row["clicks"].where(total_row["clicks"].ne(0)))
+    total_row["CTR"] = total_row["clicks"].div(total_row["impressions"].where(total_row["impressions"].ne(0)))
+    type_display = pd.concat([total_row, type_performance], ignore_index=True).rename(
+        columns={
+            "spend": "Spend",
+            "sales": "Sales",
+            "orders": "PPC Orders",
+            "impressions": "Impressions",
+            "clicks": "Clicks",
+            "Spend Share": "Spend %",
+            "Sales Share": "Sales %",
+        }
+    )
+    for rate_column in ("Spend %", "Sales %", "ACOS", "CVR", "CTR"):
+        type_display[rate_column] = type_display[rate_column].mul(100)
+    st.dataframe(
+        type_display[
+            ["Ads Type", "Spend", "Spend %", "Sales", "Sales %", "ACOS", "ROAS", "Impressions", "Clicks", "CPC", "CVR", "CTR", "PPC Orders"]
+        ],
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Spend": st.column_config.NumberColumn(format="$%.2f"),
+            "Spend %": st.column_config.NumberColumn(format="%.2f%%"),
+            "Sales": st.column_config.NumberColumn(format="$%.2f"),
+            "Sales %": st.column_config.NumberColumn(format="%.2f%%"),
+            "ACOS": st.column_config.NumberColumn(format="%.2f%%"),
+            "ROAS": st.column_config.NumberColumn(format="%.2f"),
+            "Impressions": st.column_config.NumberColumn(format="%d"),
+            "Clicks": st.column_config.NumberColumn(format="%d"),
+            "CPC": st.column_config.NumberColumn(format="$%.2f"),
+            "CVR": st.column_config.NumberColumn(format="%.2f%%"),
+            "CTR": st.column_config.NumberColumn(format="%.2f%%"),
+            "PPC Orders": st.column_config.NumberColumn(format="%d"),
+        },
+    )
 
 else:
     st.markdown("## Team KPI · Record-level")

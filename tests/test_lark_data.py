@@ -6,6 +6,7 @@ from lark_data import (
     asset_points,
     clipart_frame,
     find_field_name,
+    first_url,
     idea_frame,
     is_launched_status,
     total_asin_frame,
@@ -81,6 +82,33 @@ class LarkDataTests(unittest.TestCase):
         )
         self.assertEqual(frame["employee"].tolist(), ["Alice", "Bob"])
         self.assertEqual(frame["asset_points"].tolist(), [10, 5])
+
+    def test_internal_record_id_and_lark_image_fallback(self) -> None:
+        mapping = {
+            key: None
+            for key in (
+                "record_id", "internal_record_id", "asin", "product_name", "image",
+                "managed_by", "custom_by", "ads_by", "ads_status", "date_pickup",
+                "listing_done_date", "ps_pickup_date", "custom_done_date",
+                "custom_check_done_date", "testing_start_date",
+            )
+        }
+        mapping.update({"asin": "ASIN", "image": "Image"})
+        frame, _ = total_asin_frame(
+            [
+                {
+                    "record_id": "recuFallback123",
+                    "fields": {
+                        "ASIN": "B0ABCDEFGH",
+                        "Image": [{"tmp_url": "https://example.com/product.png"}],
+                    },
+                }
+            ],
+            mapping,
+        )
+        self.assertEqual(frame.loc[0, "record_id"], "recuFallback123")
+        self.assertEqual(frame.loc[0, "image_url"], "https://example.com/product.png")
+        self.assertEqual(first_url({"url": "https://example.com/x.png"}), "https://example.com/x.png")
 
 
 if __name__ == "__main__":
