@@ -415,8 +415,10 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
         "cliparts": (config.cliparts_table_id, CLIPART_ALIASES),
     }
     records_by_table: dict[str, list[dict[str, Any]]] = {}
+    available_fields: dict[str, list[str]] = {}
     for key, (table_id, aliases) in table_specs.items():
         field_names = client.list_field_names(config.base_token, table_id)
+        available_fields[key] = field_names
         mapping = resolve_field_names(field_names, aliases)
         selected_fields = [name for name in mapping.values() if name]
         if not selected_fields:
@@ -446,5 +448,10 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
             "TOTAL ASIN": total_mapping,
             "MRND IDEA": idea_mapping,
             "CLIPARTS": clipart_mapping,
+        },
+        "available_fields": {
+            "TOTAL ASIN": available_fields["total"],
+            "MRND IDEA": available_fields["ideas"],
+            "CLIPARTS": available_fields["cliparts"],
         },
     }

@@ -794,7 +794,12 @@ else:
                             )
 
                 with st.expander("Field diagnostics"):
-                    st.json(lark["field_mapping"])
+                    st.json(
+                        {
+                            "field_mapping": lark["field_mapping"],
+                            "available_fields": lark.get("available_fields", {}),
+                        }
+                    )
                     if attribution["duplicate_asins"]:
                         st.warning(
                             f'{attribution["duplicate_asins"]} ASIN đang map tới nhiều Record ID; '
