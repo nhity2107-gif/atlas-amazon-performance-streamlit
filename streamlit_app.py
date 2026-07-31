@@ -727,13 +727,16 @@ elif page.startswith("02"):
         sample_image_references = tuple(
             image_candidates.itertuples(index=False, name=None)
         )
+        direct_image_count = int(
+            lark["total"]["image_url"].fillna("").astype(str).str.startswith("http").sum()
+        )
         if sample_image_references:
             sample_images = cached_product_images(config, sample_image_references)
             st.caption(
-                f"Kết nối ảnh Lark: {len(sample_images)}/{len(sample_image_references)} "
-                "ảnh mẫu tải thành công qua API."
+                f"Ảnh Lark: {direct_image_count:,} dòng có URL trực tiếp · "
+                f"{len(sample_images)}/{len(sample_image_references)} ảnh mẫu tải qua Media API."
             )
-            if not sample_images:
+            if not sample_images and not direct_image_count:
                 st.warning(
                     "API ảnh Lark chưa sẵn sàng: "
                     + probe_image_download(config, sample_image_references[0])
