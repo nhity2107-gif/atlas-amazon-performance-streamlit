@@ -56,6 +56,24 @@ class LarkDataTests(unittest.TestCase):
             "Record ID",
         )
 
+    def test_lark_record_ids_support_all_rec_prefixes(self) -> None:
+        records = [
+            {"record_id": "recjAlpha123", "fields": {"ASIN": "B0ABCDEFGH"}},
+            {"record_id": "recvBeta456", "fields": {"ASIN": "B0H1234567"}},
+        ]
+        mapping = {
+            key: None
+            for key in (
+                "record_id", "internal_record_id", "asin", "product_name", "image",
+                "managed_by", "custom_by", "ads_by", "ads_status", "date_pickup",
+                "listing_done_date", "ps_pickup_date", "custom_done_date",
+                "custom_check_done_date", "testing_start_date",
+            )
+        }
+        mapping["asin"] = "ASIN"
+        frame, _ = total_asin_frame(records, mapping)
+        self.assertEqual(set(frame["record_id"]), {"recjAlpha123", "recvBeta456"})
+
     def test_clipart_created_and_updated_contributions(self) -> None:
         mapping = {
             "created_by": "Created By",

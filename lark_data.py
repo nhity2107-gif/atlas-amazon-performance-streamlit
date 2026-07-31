@@ -11,7 +11,7 @@ import requests
 
 
 ASIN_PATTERN = re.compile(r"\bB0[A-Z0-9]{8}\b", re.IGNORECASE)
-RECORD_ID_PATTERN = re.compile(r"\brecu[A-Za-z0-9]+\b", re.IGNORECASE)
+RECORD_ID_PATTERN = re.compile(r"\brec[A-Za-z0-9]+\b", re.IGNORECASE)
 
 LAUNCHED_ADS_STATUSES = {
     "launched",
