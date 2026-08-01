@@ -9,11 +9,17 @@ from lark_data import (
     first_url,
     idea_frame,
     is_launched_status,
+    numeric_value,
     total_asin_frame,
+    workflow_idea_frame,
+    workflow_total_frame,
 )
 
 
 class LarkDataTests(unittest.TestCase):
+    def test_lark_formula_numeric_value(self) -> None:
+        self.assertEqual(numeric_value({"type": 2, "value": [7.5]}), 7.5)
+
     def test_total_asin_mapping_and_explode(self) -> None:
         records = [
             {
@@ -23,6 +29,8 @@ class LarkDataTests(unittest.TestCase):
                     "Managed By": [{"name": "Sammie"}],
                     "Ads By": [{"name": "Domi"}],
                     "Ads Status": "Main Test",
+                    "Listing Lead Time": {"type": 2, "value": [4.25]},
+                    "Custom Lead Time": {"type": 2, "value": [2]},
                 }
             }
         ]
@@ -31,12 +39,57 @@ class LarkDataTests(unittest.TestCase):
         self.assertEqual(len(frame), 2)
         self.assertEqual(set(frame["asin"]), {"B0ABCDEFGH", "B0H1234567"})
         self.assertTrue(frame["ads_launched"].all())
+        self.assertEqual(frame.loc[0, "listing_lead_time"], 4.25)
+        self.assertEqual(frame.loc[0, "custom_lead_time"], 2)
+
+    def test_workflow_frames_keep_one_row_per_lark_record(self) -> None:
+        total_mapping = {
+            "listing_done_date": "Listing Done",
+            "custom_check_done_date": "Custom Check Done",
+            "testing_start_date": "Testing Start Date",
+            "listing_lead_time": "Listing Lead Time",
+            "custom_lead_time": "Custom Lead Time",
+        }
+        total_records = [
+            {
+                "record_id": "recTotal1",
+                "fields": {
+                    "Listing Done": 1785456000000,
+                    "Listing Lead Time": 4.25,
+                },
+            },
+            {"record_id": "recTotal2", "fields": {}},
+        ]
+        workflow = workflow_total_frame(total_records, total_mapping)
+        self.assertEqual(len(workflow), 2)
+        self.assertEqual(workflow.loc[0, "listing_lead_time"], 4.25)
+
+        ideas = workflow_idea_frame(
+            [
+                {"record_id": "recIdea1", "fields": {"Date Pickup": 1785456000000}},
+                {"record_id": "recIdea2", "fields": {}},
+            ],
+            {"handover_date": "Date Pickup"},
+        )
+        self.assertEqual(len(ideas), 2)
+        self.assertEqual(str(ideas.loc[0, "handover_date"].date()), "2026-07-31")
 
     def test_idea_people_field(self) -> None:
-        frame, _ = idea_frame(
-            [{"fields": {"Record ID": "recuABC123", "Idea By": [{"name": "Gary"}]}}]
+        frame, mapping = idea_frame(
+            [
+                {
+                    "fields": {
+                        "Record ID": "recuABC123",
+                        "Idea By": [{"name": "Gary"}],
+                        "Date Pickup": 1785456000000,
+                        "Idea Handover Date": 1785542400000,
+                    }
+                }
+            ]
         )
         self.assertEqual(frame.loc[0, "idea_by"], "Gary")
+        self.assertEqual(mapping["handover_date"], "Date Pickup")
+        self.assertEqual(str(frame.loc[0, "handover_date"].date()), "2026-07-31")
 
     def test_asset_matrix(self) -> None:
         self.assertEqual(asset_points("New Multi-layer Clipart"), 10)

@@ -45,17 +45,20 @@ TOTAL_ASIN_ALIASES = {
     "custom_done_date": ["Custom Done Date", "Custom Done"],
     "custom_check_done_date": ["Custom Check Done Date", "Custom Check Done"],
     "testing_start_date": ["Testing Start Date", "Testing Start"],
+    "listing_lead_time": ["Listing Lead Time"],
+    "custom_lead_time": ["Custom Lead Time"],
 }
 
 IDEA_ALIASES = {
     "record_id": ["Record ID", "RecordID", "Product Record ID"],
     "idea_by": ["Idea By", "Created By", "Owner"],
     "handover_date": [
+        "Date Pickup",
+        "Pickup Date",
         "Idea Handover Date",
         "Handover Date",
         "Qualified Date",
         "Idea Done Date",
-        "Date Pickup",
     ],
 }
 
@@ -127,6 +130,32 @@ def display_value(value: Any) -> str:
     return " / ".join(seen)
 
 
+def numeric_value(value: Any) -> float | None:
+    """Extract a number from Lark numeric/formula field payloads."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        if "value" in value:
+            return numeric_value(value["value"])
+        for item in value.values():
+            parsed = numeric_value(item)
+            if parsed is not None:
+                return parsed
+        return None
+    if isinstance(value, list):
+        for item in value:
+            parsed = numeric_value(item)
+            if parsed is not None:
+                return parsed
+        return None
+    try:
+        return float(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def first_url(value: Any) -> str:
     if isinstance(value, str):
         return value if value.startswith(("http://", "https://")) else ""
@@ -177,6 +206,7 @@ def identifiers(value: Any, pattern: re.Pattern[str]) -> list[str]:
 
 
 def lark_datetime(value: Any) -> pd.Timestamp | pd.NaT:
+    """Parse Lark date fields without shifting their calendar date by timezone."""
     values = text_values(value)
     if not values:
         return pd.NaT
@@ -189,7 +219,7 @@ def lark_datetime(value: Any) -> pd.Timestamp | pd.NaT:
         parsed = pd.to_datetime(raw, errors="coerce", utc=True)
     if pd.isna(parsed):
         return pd.NaT
-    return parsed.tz_convert("America/Los_Angeles").tz_localize(None)
+    return parsed.tz_localize(None)
 
 
 def normalize_ads_status(value: Any) -> str:
@@ -342,7 +372,7 @@ class LarkClient:
                     json={"field_names": selected_fields, "automatic_fields": False},
                     timeout=self.timeout,
                 )
-                if response.status_code not in {429, 502, 503, 504}:
+                if response.status_code not in {429, 500, 502, 503, 504}:
                     break
                 time.sleep(1.5 * (attempt + 1))
             assert response is not None
@@ -451,6 +481,9 @@ def total_asin_frame(
                     "testing_start_date",
                 ):
                     row[date_name] = lark_datetime(fields.get(mapping[date_name])) if mapping[date_name] else pd.NaT
+                for lead_name in ("listing_lead_time", "custom_lead_time"):
+                    field_name = mapping.get(lead_name)
+                    row[lead_name] = numeric_value(fields.get(field_name)) if field_name else None
                 row["ads_launched"] = is_launched_status(row["ads_status"])
                 rows.append(row)
     columns = [
@@ -471,9 +504,64 @@ def total_asin_frame(
         "custom_done_date",
         "custom_check_done_date",
         "testing_start_date",
+        "listing_lead_time",
+        "custom_lead_time",
         "ads_launched",
     ]
     return pd.DataFrame(rows, columns=columns), mapping
+
+
+def workflow_total_frame(
+    records: list[dict[str, Any]],
+    mapping: dict[str, str | None],
+) -> pd.DataFrame:
+    """Return one row per TOTAL ASIN record, matching Lark Metrics record count."""
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        fields = record.get("fields") or {}
+        row: dict[str, Any] = {"lark_record_id": str(record.get("record_id") or "")}
+        for date_name in (
+            "listing_done_date",
+            "custom_check_done_date",
+            "testing_start_date",
+        ):
+            field_name = mapping.get(date_name)
+            row[date_name] = lark_datetime(fields.get(field_name)) if field_name else pd.NaT
+        for lead_name in ("listing_lead_time", "custom_lead_time"):
+            field_name = mapping.get(lead_name)
+            row[lead_name] = numeric_value(fields.get(field_name)) if field_name else None
+        rows.append(row)
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "lark_record_id",
+            "listing_done_date",
+            "custom_check_done_date",
+            "testing_start_date",
+            "listing_lead_time",
+            "custom_lead_time",
+        ],
+    )
+
+
+def workflow_idea_frame(
+    records: list[dict[str, Any]],
+    mapping: dict[str, str | None],
+) -> pd.DataFrame:
+    """Return one row per MRND IDEA record, matching Lark Metrics record count."""
+    rows: list[dict[str, Any]] = []
+    date_field = mapping.get("handover_date")
+    for record in records:
+        fields = record.get("fields") or {}
+        rows.append(
+            {
+                "lark_record_id": str(record.get("record_id") or ""),
+                "handover_date": lark_datetime(fields.get(date_field))
+                if date_field
+                else pd.NaT,
+            }
+        )
+    return pd.DataFrame(rows, columns=["lark_record_id", "handover_date"])
 
 
 def idea_frame(
@@ -568,6 +656,11 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
         preflight_mapping["total"],
         image_field_id,
     )
+    workflow = workflow_total_frame(total_records, preflight_mapping["total"])
+    workflow_ideas = workflow_idea_frame(
+        idea_records,
+        preflight_mapping["ideas"],
+    )
     ideas, idea_mapping = idea_frame(idea_records, preflight_mapping["ideas"])
     cliparts, clipart_mapping = clipart_frame(
         clipart_records,
@@ -575,6 +668,8 @@ def fetch_lark_frames(config: LarkConfig) -> dict[str, Any]:
     )
     return {
         "total": total,
+        "workflow": workflow,
+        "workflow_ideas": workflow_ideas,
         "ideas": ideas,
         "cliparts": cliparts,
         "record_counts": {

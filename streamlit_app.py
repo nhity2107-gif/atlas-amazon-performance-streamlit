@@ -9,10 +9,23 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
-from snapshot_store import SnapshotError, empty_snapshot, load_encrypted_snapshot
+from lark_snapshot_store import (
+    SCHEMA_VERSION as LARK_SNAPSHOT_SCHEMA_VERSION,
+    load_lark_snapshot,
+    save_lark_snapshot,
+    snapshot_version as lark_snapshot_version,
+)
+from product_data import records_from_order_hints, top_record_id_frame
+from snapshot_store import (
+    SnapshotError,
+    empty_snapshot,
+    load_snapshot,
+    load_snapshot_metadata,
+)
 
 
-PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.enc"
+PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
+PERSISTED_LARK_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "lark"
 
 
 st.set_page_config(
@@ -155,7 +168,7 @@ EMPLOYEES = {
 }
 
 REPORT_START = pd.Timestamp("2026-07-01")
-REPORT_END = pd.Timestamp("2026-07-31 23:59:59")
+REPORT_END = pd.Timestamp("2026-07-30 23:59:59")
 COHORT_START = REPORT_START - pd.DateOffset(months=19)
 
 
@@ -212,91 +225,50 @@ def ads_type_frame(store_name: str) -> pd.DataFrame:
 
 
 def daily_frame(store_name: str) -> pd.DataFrame:
-    if store_name == "All Stores":
-        left = {d: (r, o) for d, r, o in WR_DAILY}
-        right = {d: (r, o) for d, r, o in PAW_DAILY}
-        rows = [
-            (d, left.get(d, (0, 0))[0] + right.get(d, (0, 0))[0],
-             left.get(d, (0, 0))[1] + right.get(d, (0, 0))[1])
-            for d in range(1, 31)
-        ]
-    else:
-        source = {d: (r, o) for d, r, o in STORES[store_name]["daily"]}
-        rows = [(d, *source.get(d, (0, 0))) for d in range(1, 31)]
-    return pd.DataFrame(rows, columns=["Day", "Revenue", "Orders"]).set_index("Day")
+    stores = list(STORES) if store_name == "All Stores" else [store_name]
+    performance = selected_order_performance(stores)
+    if performance.empty:
+        return pd.DataFrame(columns=["Revenue", "Orders"])
+    performance = performance.copy()
+    performance["Date"] = pd.to_datetime(performance["Date"], errors="coerce")
+    performance = performance.dropna(subset=["Date"])
+    performance["Day"] = performance["Date"].dt.day
+    return performance.groupby("Day").agg(
+        Revenue=("Revenue", "sum"),
+        Orders=("Orders", "sum"),
+    )
 
 
 def active_store(store_name: str) -> dict:
-    if store_name != "All Stores":
-        return STORES[store_name]
-    return {
+    fallback = STORES[store_name] if store_name != "All Stores" else {
         key: sum(STORES[name][key] for name in STORES)
         for key in [
             "raw", "cancelled", "valid", "revenue", "orders", "units", "asins",
             "fba_revenue", "fbm_revenue", "fba_orders", "fbm_orders",
         ]
     } | {"products": WR_PRODUCTS}
-
-
-def aggregate_order_report(uploaded_file, store_name: str) -> pd.DataFrame:
-    uploaded_file.seek(0)
-    frame = pd.read_csv(uploaded_file, sep="\t", dtype=str)
-    required = {
-        "purchase-date",
-        "order-status",
-        "currency",
-        "asin",
-        "item-price",
-        "shipping-price",
-        "quantity",
-        "amazon-order-id",
+    stores = list(STORES) if store_name == "All Stores" else [store_name]
+    performance = selected_order_performance(stores)
+    if performance.empty:
+        return fallback | {"snapshot_rows": 0, "snapshot_backed": False}
+    return fallback | {
+        "revenue": float(performance["Revenue"].sum()),
+        "orders": int(performance["Orders"].sum()),
+        "units": int(performance["Units"].sum()),
+        "asins": int(performance["ASIN"].nunique()),
+        "snapshot_rows": len(performance),
+        "snapshot_backed": True,
     }
-    missing = sorted(required.difference(frame.columns))
-    if missing:
-        raise ValueError(f"Order report {store_name} thiếu cột: {', '.join(missing)}")
-    for column in ("item-price", "shipping-price", "quantity"):
-        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
-    frame["purchase_date_pacific"] = (
-        pd.to_datetime(frame["purchase-date"], errors="coerce", utc=True)
-        .dt.tz_convert("America/Los_Angeles")
-    )
-    valid = frame[
-        frame["order-status"].fillna("").str.casefold().ne("cancelled")
-        & frame["currency"].eq("USD")
-        & frame["purchase_date_pacific"].dt.date.between(
-            REPORT_START.date(),
-            pd.Timestamp("2026-07-30").date(),
-        )
-    ].copy()
-    valid["Revenue"] = valid["item-price"] + valid["shipping-price"]
-    if "sku" in valid.columns:
-        valid["record_id_hint"] = (
-            valid["sku"].fillna("").str.extract(r"\b(rec[A-Za-z0-9]+)\b", expand=False).fillna("")
-        )
-    else:
-        valid["record_id_hint"] = ""
-    result = (
-        valid.groupby("asin", as_index=False)
-        .agg(
-            Revenue=("Revenue", "sum"),
-            Orders=("amazon-order-id", "nunique"),
-            Units=("quantity", "sum"),
-            record_id_hint=(
-                "record_id_hint",
-                lambda values: next((str(value) for value in values if str(value).strip()), ""),
-            ),
-        )
-        .rename(columns={"asin": "ASIN"})
-    )
-    result["ASIN"] = result["ASIN"].astype(str).str.upper().str.strip()
-    result.insert(0, "Store", store_name)
-    return result
 
 
 @st.cache_data(show_spinner=False)
-def persisted_order_performance(snapshot_key: str) -> pd.DataFrame:
+def persisted_order_performance(
+    snapshot_version: int,
+    snapshot_schema_version: int,
+) -> pd.DataFrame:
+    del snapshot_version, snapshot_schema_version
     try:
-        frame, _ = load_encrypted_snapshot(PERSISTED_SNAPSHOT_PATH, snapshot_key)
+        frame = load_snapshot(PERSISTED_SNAPSHOT_PATH)
     except SnapshotError:
         return empty_snapshot()
     return frame
@@ -304,19 +276,14 @@ def persisted_order_performance(snapshot_key: str) -> pd.DataFrame:
 
 def selected_order_performance(
     stores: list[str],
-    uploads: dict[str, object],
-) -> tuple[pd.DataFrame, bool]:
-    if all(uploads.get(name) is not None for name in stores):
-        return (
-            pd.concat(
-                [aggregate_order_report(uploads[name], name) for name in stores],
-                ignore_index=True,
-            ),
-            False,
-        )
-    persisted = persisted_order_performance(secret_value("DASHBOARD_DATA_KEY"))
-    persisted = persisted[persisted["Store"].isin(stores)].copy()
-    return persisted, not persisted.empty
+) -> pd.DataFrame:
+    snapshot_version = (
+        PERSISTED_SNAPSHOT_PATH.stat().st_mtime_ns
+        if PERSISTED_SNAPSHOT_PATH.exists()
+        else 0
+    )
+    persisted = persisted_order_performance(snapshot_version, 2)
+    return persisted[persisted["Store"].isin(stores)].copy()
 
 
 def secret_value(name: str) -> str:
@@ -352,10 +319,32 @@ def lark_config() -> tuple[LarkConfig | None, list[str]]:
     )
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def cached_lark_frames(config: LarkConfig, schema_version: str = "lark-kpi-v6") -> dict:
-    del schema_version
-    return fetch_lark_frames(config)
+@st.cache_data(show_spinner=False)
+def persisted_lark_frames(snapshot_version: int, schema_version: str) -> dict | None:
+    del snapshot_version, schema_version
+    return load_lark_snapshot(PERSISTED_LARK_SNAPSHOT_DIR)
+
+
+def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
+    version = lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR)
+    saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+    if saved is not None and not refresh:
+        return saved
+    try:
+        live = fetch_lark_frames(config)
+        save_lark_snapshot(PERSISTED_LARK_SNAPSHOT_DIR, live)
+        persisted_lark_frames.clear()
+        refreshed = persisted_lark_frames(
+            lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
+            LARK_SNAPSHOT_SCHEMA_VERSION,
+        )
+        return refreshed if refreshed is not None else live
+    except Exception as exc:
+        if saved is None:
+            raise
+        fallback = saved.copy()
+        fallback["refresh_error"] = str(exc)
+        return fallback
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -366,17 +355,127 @@ def cached_product_images(
     return fetch_image_data_urls(config, references)
 
 
-def in_report_month(series: pd.Series) -> pd.Series:
+def render_top_record_table(
+    records: pd.DataFrame,
+    total_revenue: float,
+    config: LarkConfig | None,
+) -> None:
+    products = top_record_id_frame(records, total_revenue, limit=50)
+    if products.empty:
+        st.warning("Chưa tìm thấy Record ID hợp lệ để lập bảng xếp hạng.")
+        return
+
+    image_data_urls: dict[str, str] = {}
+    requested_image_tokens: set[str] = set()
+    if config is not None:
+        image_references = tuple(
+            products[["image_token", "image_field_id", "image_record_id"]]
+            .fillna("")
+            .itertuples(index=False, name=None)
+        )
+        requested_image_tokens = {
+            token
+            for token, field_id, record_id in image_references
+            if token and field_id and record_id
+        }
+        if requested_image_tokens:
+            image_data_urls = cached_product_images(config, image_references)
+            source_image_urls = products["Image"].copy()
+            products["Image"] = products["image_token"].map(image_data_urls).fillna("")
+            products["Image"] = products["Image"].where(
+                products["Image"].ne(""),
+                source_image_urls,
+            )
+            st.caption(
+                f"Ảnh Lark: đã tải {len(image_data_urls)}/{len(requested_image_tokens)} "
+                "ảnh của Top Record ID qua API."
+            )
+
+    display_products = products[
+        [
+            "#",
+            "Image",
+            "Record ID",
+            "Product",
+            "Idea By",
+            "Managed By",
+            "Custom By",
+            "Ads By",
+            "ASIN count",
+            "Revenue",
+            "Orders",
+            "Units",
+            "Share",
+        ]
+    ].copy()
+    display_products["Revenue"] = display_products["Revenue"].map(
+        lambda value: f"${float(value):,.2f}"
+    )
+    display_products["Share"] = display_products["Share"].map(
+        lambda value: f"{float(value):.2f}%"
+    )
+    product_row_height = 52
+    product_table_height = 42 + len(display_products) * product_row_height
+    st.dataframe(
+        display_products,
+        hide_index=True,
+        width="stretch",
+        height=product_table_height,
+        row_height=product_row_height,
+        column_config={
+            "Image": st.column_config.ImageColumn(width="small"),
+            "Record ID": st.column_config.TextColumn(width="medium"),
+            "Product": st.column_config.TextColumn(width="large"),
+            "Idea By": st.column_config.TextColumn(width="medium"),
+            "Managed By": st.column_config.TextColumn(width="medium"),
+            "Custom By": st.column_config.TextColumn(width="medium"),
+            "Ads By": st.column_config.TextColumn(width="medium"),
+            "ASIN count": st.column_config.NumberColumn(width="small"),
+            "Revenue": st.column_config.TextColumn(width="medium"),
+            "Orders": st.column_config.NumberColumn(width="small"),
+            "Units": st.column_config.NumberColumn(width="small"),
+            "Share": st.column_config.TextColumn(width="small"),
+        },
+    )
+
+
+def in_lark_calendar_window(
+    series: pd.Series,
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+) -> pd.Series:
     parsed = pd.to_datetime(series, errors="coerce")
-    return parsed.between(REPORT_START, REPORT_END)
+    # Lark date filters operate on calendar dates. Normalizing prevents a
+    # timestamp later on the final day (for example 31/07 10:29) from being
+    # excluded by an end boundary represented as 31/07 00:00.
+    return parsed.dt.normalize().between(
+        pd.Timestamp(window_start).normalize(),
+        pd.Timestamp(window_end).normalize(),
+    )
 
 
-def workflow_lead_days(start: pd.Series, end: pd.Series) -> pd.Series:
+def in_report_month(series: pd.Series) -> pd.Series:
+    return in_lark_calendar_window(series, REPORT_START, REPORT_END)
+
+
+def workflow_lead_days(
+    start: pd.Series,
+    end: pd.Series,
+    window_start: pd.Timestamp = REPORT_START,
+    window_end: pd.Timestamp = REPORT_END,
+) -> pd.Series:
     """Return valid stage lead times completed in the reporting month."""
     start_dates = pd.to_datetime(start, errors="coerce")
     end_dates = pd.to_datetime(end, errors="coerce")
     lead = (end_dates - start_dates).dt.total_seconds().div(86400)
-    return lead.where(in_report_month(end_dates) & lead.ge(0))
+    return lead.where(
+        in_lark_calendar_window(end_dates, window_start, window_end) & lead.ge(0)
+    )
+
+
+def validation_cohort_start(window_end: pd.Timestamp) -> pd.Timestamp:
+    previous_month = window_end.normalize().replace(day=1) - pd.DateOffset(months=1)
+    return previous_month.replace(day=20)
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -510,132 +609,183 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
     }
 
 
-def employee_kpi_tables(attribution: dict, hero_threshold: float) -> dict[str, pd.DataFrame]:
+def employee_kpi_tables(
+    attribution: dict,
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+) -> dict[str, pd.DataFrame]:
     records = attribution["records"].copy()
     attributed_asins = attribution.get("attributed_asins", pd.DataFrame()).copy()
     cliparts = attribution["cliparts"].copy()
     if records.empty:
         return {}
 
-    records["hero"] = records["Revenue"].ge(hero_threshold)
+    cohort_start = validation_cohort_start(window_end)
     records["validated"] = records["Units"].ge(10)
-    records["listing_lead_days"] = workflow_lead_days(
-        records["date_pickup"], records["listing_done_date"]
-    )
-    records["custom_lead_days"] = workflow_lead_days(
-        records["listing_done_date"], records["custom_done_date"]
-    )
-    records["pd_check_days"] = workflow_lead_days(
-        records["custom_done_date"], records["custom_check_done_date"]
-    )
-    records["ads_lead_days"] = workflow_lead_days(
-        records["custom_check_done_date"], records["testing_start_date"]
-    )
 
-    def base_owner_frame(column: str) -> pd.DataFrame:
+    def owner_records(column: str) -> pd.DataFrame:
         return records[records[column].fillna("").str.strip().ne("")].copy()
 
-    idea = base_owner_frame("idea_by")
-    idea["qualified"] = in_report_month(idea["handover_date"])
-    idea["validated_idea"] = idea["qualified"] & idea["validated"]
+    idea = owner_records("idea_by")
+    idea["qualified"] = in_lark_calendar_window(
+        idea["handover_date"], window_start, window_end
+    )
+    idea["in_cohort"] = in_lark_calendar_window(
+        idea["handover_date"], cohort_start, window_end
+    )
+    idea["cohort_validated"] = idea["in_cohort"] & idea["validated"]
     idea_table = (
         idea.groupby("idea_by", as_index=False)
         .agg(
             Qualified_Ideas=("qualified", "sum"),
-            Validated_Records=("validated_idea", "sum"),
-            Hero_Estimate=("hero", "sum"),
+            Cohort_Records=("in_cohort", "sum"),
+            Validated_Records=("cohort_validated", "sum"),
             Revenue=("Revenue", "sum"),
         )
         .rename(columns={"idea_by": "Nhân sự"})
     )
-    idea_table["Validated_Rate"] = (
-        idea_table["Validated_Records"] / idea_table["Qualified_Ideas"].where(
-            idea_table["Qualified_Ideas"].ne(0)
-        )
+    idea_table["Validated_Rate"] = idea_table["Validated_Records"].div(
+        idea_table["Cohort_Records"].where(idea_table["Cohort_Records"].ne(0))
     )
 
-    product_records = base_owner_frame("managed_by")
+    product = owner_records("managed_by")
+    product["in_cohort"] = in_lark_calendar_window(
+        product["listing_done_date"], cohort_start, window_end
+    )
+    product["cohort_sold"] = product["in_cohort"] & product["validated"]
+    product["new_revenue"] = product["Revenue"].where(product["in_cohort"], 0)
+    product_table = (
+        product.groupby("managed_by", as_index=False)
+        .agg(
+            Cohort_Records=("in_cohort", "sum"),
+            Sold_Records=("cohort_sold", "sum"),
+            New_Revenue=("new_revenue", "sum"),
+            Portfolio_Revenue=("Revenue", "sum"),
+        )
+        .rename(columns={"managed_by": "Nhân sự"})
+    )
+    product_table["Sold_Rate"] = product_table["Sold_Records"].div(
+        product_table["Cohort_Records"].where(product_table["Cohort_Records"].ne(0))
+    )
     product_asins = attributed_asins[
         attributed_asins["managed_by"].fillna("").str.strip().ne("")
     ].copy()
-    product_asins["qualified"] = in_report_month(product_asins["custom_check_done_date"])
+    product_asins["qualified"] = in_lark_calendar_window(
+        product_asins["custom_check_done_date"], window_start, window_end
+    )
+    listing_lead_source = product_asins.get(
+        "listing_lead_time", pd.Series(index=product_asins.index, dtype=float)
+    )
+    product_asins["listing_lead_selected"] = pd.to_numeric(
+        listing_lead_source, errors="coerce"
+    ).where(
+        in_lark_calendar_window(
+            product_asins["listing_done_date"], window_start, window_end
+        )
+    )
     product_output = (
         product_asins.groupby("managed_by", as_index=False)
-        .agg(Qualified_ASINs=("qualified", "sum"))
-        .rename(columns={"managed_by": "Nhân sự"})
-    )
-    product_table = (
-        product_records.groupby("managed_by", as_index=False)
         .agg(
-            Portfolio_Records=("record_id", "nunique"),
-            Sold_Records=("validated", "sum"),
-            Portfolio_Revenue=("Revenue", "sum"),
-            Listing_Lead_Days=("listing_lead_days", "mean"),
+            Qualified_ASINs=("qualified", "sum"),
+            Listing_Lead_Days=("listing_lead_selected", "mean"),
         )
         .rename(columns={"managed_by": "Nhân sự"})
-        .merge(product_output, on="Nhân sự", how="left")
     )
+    product_table = product_table.merge(product_output, on="Nhân sự", how="left")
     product_table["Qualified_ASINs"] = product_table["Qualified_ASINs"].fillna(0)
-    product_table["Sold_Rate"] = (
-        product_table["Sold_Records"]
-        / product_table["Portfolio_Records"].where(product_table["Portfolio_Records"].ne(0))
-    )
 
-    support_records = base_owner_frame("custom_by")
     support_asins = attributed_asins[
         attributed_asins["custom_by"].fillna("").str.strip().ne("")
     ].copy()
-    support_asins["qualified"] = in_report_month(support_asins["custom_check_done_date"])
-    support_output = (
+    support_asins["qualified"] = in_lark_calendar_window(
+        support_asins["custom_check_done_date"], window_start, window_end
+    )
+    support_table = (
         support_asins.groupby("custom_by", as_index=False)
         .agg(Qualified_Custom_ASINs=("qualified", "sum"))
         .rename(columns={"custom_by": "Nhân sự"})
     )
-    support_table = (
-        support_records.groupby("custom_by", as_index=False)
-        .agg(
-            Portfolio_Records=("record_id", "nunique"),
-            Custom_Lead_Days=("custom_lead_days", "mean"),
-            PD_Check_Days=("pd_check_days", "mean"),
-        )
-        .rename(columns={"custom_by": "Nhân sự"})
-        .merge(support_output, on="Nhân sự", how="left")
-    )
-    support_table["Qualified_Custom_ASINs"] = support_table["Qualified_Custom_ASINs"].fillna(0)
+    points = pd.DataFrame(columns=["Nhân sự", "Asset_Points"])
     if not cliparts.empty:
-        cliparts_month = cliparts[in_report_month(cliparts["created_date"])]
+        cliparts_window = cliparts[
+            in_lark_calendar_window(
+                cliparts["created_date"], window_start, window_end
+            )
+            & cliparts["employee"].fillna("").str.strip().ne("")
+        ]
         points = (
-            cliparts_month[cliparts_month["employee"].fillna("").str.strip().ne("")]
-            .groupby("employee", as_index=False)
+            cliparts_window.groupby("employee", as_index=False)
             .agg(Asset_Points=("asset_points", "sum"))
             .rename(columns={"employee": "Nhân sự"})
         )
-        support_table = support_table.merge(points, on="Nhân sự", how="left")
-    support_table["Asset_Points"] = support_table.get("Asset_Points", 0)
-    support_table["Asset_Points"] = support_table["Asset_Points"].fillna(0)
+    support_table = support_table.merge(points, on="Nhân sự", how="outer")
+    for column in ("Qualified_Custom_ASINs", "Asset_Points"):
+        support_table[column] = support_table[column].fillna(0)
 
-    ads = base_owner_frame("ads_by")
-    ads["tested_in_month"] = in_report_month(ads["testing_start_date"])
+    ads = owner_records("ads_by")
+    ads["in_cohort"] = in_lark_calendar_window(
+        ads["testing_start_date"], cohort_start, window_end
+    )
+    ads["new_revenue"] = ads["Revenue"].where(ads["in_cohort"], 0)
+    ads["winner"] = ads["Revenue"].ge(5000)
     ads_table = (
         ads.groupby("ads_by", as_index=False)
         .agg(
-            Ownership_Records=("record_id", "nunique"),
-            Launched_Records=("ads_launched", "sum"),
-            Ads_Tested=("tested_in_month", "sum"),
-            Hero_Estimate=("hero", "sum"),
+            New_Winner_Created=("winner", "sum"),
+            Cohort_Records=("in_cohort", "sum"),
+            New_Revenue=("new_revenue", "sum"),
             Portfolio_Revenue=("Revenue", "sum"),
         )
         .rename(columns={"ads_by": "Nhân sự"})
     )
-    ads_table["Testing_Coverage"] = (
-        ads_table["Launched_Records"]
-        / ads_table["Ownership_Records"].where(ads_table["Ownership_Records"].ne(0))
-    )
+    ads_table["ACOS"] = pd.NA
+
+    idea_table = idea_table[
+        [
+            "Nhân sự",
+            "Qualified_Ideas",
+            "Cohort_Records",
+            "Validated_Records",
+            "Validated_Rate",
+            "Revenue",
+        ]
+    ]
+    product_table = product_table[
+        [
+            "Nhân sự",
+            "Qualified_ASINs",
+            "Cohort_Records",
+            "Sold_Records",
+            "Sold_Rate",
+            "New_Revenue",
+            "Portfolio_Revenue",
+            "Listing_Lead_Days",
+        ]
+    ]
+    ads_table = ads_table[
+        [
+            "Nhân sự",
+            "New_Winner_Created",
+            "ACOS",
+            "Portfolio_Revenue",
+            "Cohort_Records",
+            "New_Revenue",
+        ]
+    ]
+
     return {
-        "Idea": idea_table.sort_values("Revenue", ascending=False),
-        "Product Development": product_table.sort_values("Portfolio_Revenue", ascending=False),
-        "Product Support": support_table.sort_values("Qualified_Custom_ASINs", ascending=False),
-        "Ads Executive": ads_table.sort_values("Portfolio_Revenue", ascending=False),
+        "Idea · 40% Output / 30% Efficiency / 30% Business": idea_table.sort_values(
+            "Revenue", ascending=False
+        ),
+        "Product · 30% Output / 20% Efficiency / 50% Business": product_table.sort_values(
+            "Portfolio_Revenue", ascending=False
+        ),
+        "Product Support · 80% Output / 20% Asset": support_table.sort_values(
+            "Qualified_Custom_ASINs", ascending=False
+        ),
+        "Ads · 45% Efficiency / 55% Business": ads_table.sort_values(
+            "Portfolio_Revenue", ascending=False
+        ),
     }
 
 
@@ -678,17 +828,25 @@ with top_left:
     st.markdown('<div class="atlas-eyebrow">PERFORMANCE SNAPSHOT</div>', unsafe_allow_html=True)
     st.markdown('<div class="atlas-title">Tháng 07/2026</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="atlas-subtitle">Order Report thực tế · 01–30/07 theo Pacific Time</div>',
+        '<div class="atlas-subtitle">Order Report thực tế · Purchase Time theo America/Los_Angeles</div>',
         unsafe_allow_html=True,
     )
 with top_right:
     store = st.selectbox("Store", ["All Stores", "Pawsionate", "Wrappiness"])
 
 data = active_store(store)
+if data["snapshot_backed"]:
+    notice_text = (
+        f'{data["snapshot_rows"]:,} dòng tổng hợp theo ngày/ASIN · Cancelled đã loại tại pipeline · '
+        "Revenue = Item Price + Shipping Price."
+    )
+else:
+    notice_text = (
+        f'{data["raw"]:,} dòng nguồn · loại {data["cancelled"]:,} Cancelled · '
+        f'{data["valid"]:,} dòng hợp lệ. Revenue = Item Price + Shipping Price.'
+    )
 st.markdown(
-    f'<div class="atlas-notice"><strong>{store}</strong><span>'
-    f'{data["raw"]:,} dòng nguồn · loại {data["cancelled"]:,} Cancelled · '
-    f'{data["valid"]:,} dòng hợp lệ. Revenue = Item Price + Shipping Price.</span></div>',
+    f'<div class="atlas-notice"><strong>{store}</strong><span>{notice_text}</span></div>',
     unsafe_allow_html=True,
 )
 
@@ -706,47 +864,46 @@ if page.startswith("01"):
         st.bar_chart(daily_frame(store)["Revenue"], color="#ff7b2c", height=310)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
-        fulfillment = pd.DataFrame(
-            {
-                "Fulfillment": ["FBM", "FBA"],
-                "Revenue": [data["fbm_revenue"], data["fba_revenue"]],
-            }
+        overview_stores = list(STORES) if store == "All Stores" else [store]
+        overview_performance = selected_order_performance(overview_stores)
+        store_share = (
+            overview_performance.groupby("Store", as_index=False)["Revenue"].sum()
+            if not overview_performance.empty
+            else pd.DataFrame({"Store": [store], "Revenue": [data["revenue"]]})
         )
-        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">FULFILLMENT</div><h3>Revenue split</h3>', unsafe_allow_html=True)
-        st.plotly_chart(
-            donut_chart(fulfillment, "Fulfillment", "Revenue", ["#756ee9", "#ff9d5c"], 245),
-            width="stretch",
-            config={"displayModeBar": False},
-        )
-        st.caption(f'{data["fbm_orders"]:,} FBM orders · {data["fba_orders"]:,} FBA orders')
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    if store == "All Stores":
-        store_share = pd.DataFrame(
-            {
-                "Store": ["Wrappiness", "Pawsionate"],
-                "Revenue": [STORES["Wrappiness"]["revenue"], STORES["Pawsionate"]["revenue"]],
-            }
-        )
-        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">REVENUE BY STORE</div><h3>Tỷ trọng Revenue hai store</h3>', unsafe_allow_html=True)
+        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">SNAPSHOT ORDER</div><h3>Revenue theo store</h3>', unsafe_allow_html=True)
         st.plotly_chart(
             donut_chart(store_share, "Store", "Revenue", ["#40b6c8", "#ff9d5c"], 285),
             width="stretch",
             config={"displayModeBar": False},
         )
+        st.caption("Purchase Time · America/Los_Angeles · Cancelled excluded")
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page.startswith("02"):
     st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Top sản phẩm theo Record ID</h3></div>', unsafe_allow_html=True)
     st.caption(
-        "Tải order report để gộp toàn bộ ASIN cùng sản phẩm theo Record ID từ Lark. "
+        "Dữ liệu Order được nạp tự động từ snapshot đã lưu và gộp toàn bộ ASIN "
+        "cùng sản phẩm theo Record ID từ Lark. "
         "Share được tính trên tổng Revenue của store đang chọn."
     )
     config, missing_secrets = lark_config()
     lark = None
     if not missing_secrets:
-        with st.spinner("Đang kết nối Lark Base…"):
-            lark = cached_lark_frames(config)
+        with st.spinner("Đang nạp snapshot Lark gần nhất…"):
+            lark = latest_lark_frames(config)
+        if lark.get("snapshot_updated_at"):
+            product_lark_updated_at = pd.to_datetime(
+                lark["snapshot_updated_at"], errors="coerce", utc=True
+            )
+            if pd.notna(product_lark_updated_at):
+                product_lark_updated_at = product_lark_updated_at.tz_convert(
+                    "Asia/Ho_Chi_Minh"
+                )
+                st.caption(
+                    "Mapping lấy từ snapshot đồng bộ tất cả bảng Lark lúc "
+                    f"{product_lark_updated_at:%d/%m/%Y %H:%M}."
+                )
         image_candidates = (
             lark["total"][["image_token", "image_field_id", "image_record_id"]]
             .fillna("")
@@ -772,38 +929,23 @@ elif page.startswith("02"):
                     "API ảnh Lark chưa sẵn sàng: "
                     + probe_image_download(config, sample_image_references[0])
                 )
-    product_uploads = {}
-    upload_columns = st.columns(2)
-    if store in {"All Stores", "Wrappiness"}:
-        with upload_columns[0]:
-            product_uploads["Wrappiness"] = st.file_uploader(
-                "Wrappiness · Order report",
-                type=["txt", "tsv", "csv"],
-                key="product_wr_order",
-            )
-    if store in {"All Stores", "Pawsionate"}:
-        with upload_columns[1]:
-            product_uploads["Pawsionate"] = st.file_uploader(
-                "Pawsionate · Order report",
-                type=["txt", "tsv", "csv"],
-                key="product_paw_order",
-            )
-
     required_product_stores = (
         ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
     )
-    product_performance, using_saved_orders = selected_order_performance(
-        required_product_stores,
-        product_uploads,
-    )
-    if using_saved_orders:
-        st.info(
-            "Đang dùng dữ liệu Order tháng 07/2026 đã lưu. Upload đủ report của store đang chọn "
-            "nếu muốn thay thế dữ liệu trong phiên hiện tại."
-        )
+    product_performance = selected_order_performance(required_product_stores)
     if not product_performance.empty:
         if missing_secrets:
-            st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
+            st.warning(
+                "Chưa kết nối Lark nên dashboard đang gộp theo Record ID lấy từ SKU. "
+                "Các cột Idea By, Managed By, Custom By và Ads By được để trống "
+                "cho đến khi map được dữ liệu từ Lark."
+            )
+            hint_records = records_from_order_hints(product_performance)
+            render_top_record_table(
+                hint_records,
+                float(product_performance["Revenue"].sum()),
+                None,
+            )
         else:
             assert lark is not None
             attribution = prepare_attribution(lark, store, product_performance)
@@ -849,65 +991,17 @@ elif page.startswith("02"):
             else:
                 st.success("Mapping đạt 100%: toàn bộ ASIN có Record ID trong TOTAL ASIN.")
 
-            products = attribution["records"].copy()
-            products = products[products["Revenue"].gt(0)].sort_values("Revenue", ascending=False)
-            source_image_urls = products["image_url"].copy()
-            image_references = tuple(
-                products[["image_token", "image_field_id", "image_record_id"]]
-                .fillna("")
-                .itertuples(index=False, name=None)
-            )
-            image_data_urls = cached_product_images(config, image_references)
-            requested_image_tokens = {
-                token
-                for token, field_id, record_id in image_references[:25]
-                if token and field_id and record_id
-            }
-            products["image_url"] = products["image_token"].map(image_data_urls).fillna("")
-            products["image_url"] = products["image_url"].where(
-                products["image_url"].ne(""),
-                source_image_urls,
-            )
-            total_revenue = float(product_performance["Revenue"].sum())
-            products["Share"] = products["Revenue"].div(total_revenue if total_revenue else 1).mul(100)
-            products.insert(0, "#", range(1, len(products) + 1))
-            products = products.rename(
-                columns={
-                    "record_id": "Record ID",
-                    "product_name": "Product",
-                    "image_url": "Image",
-                    "asin_count": "ASIN count",
-                }
-            )
-            if requested_image_tokens:
-                st.caption(
-                    f"Ảnh Lark: đã tải {len(image_data_urls)}/{len(requested_image_tokens)} "
-                    "ảnh của Top Record ID qua API."
-                )
-            st.dataframe(
-                products[["#", "Image", "Record ID", "Product", "ASIN count", "Revenue", "Orders", "Units", "Share"]].head(50),
-                hide_index=True,
-                width="stretch",
-                row_height=64,
-                column_config={
-                    "Image": st.column_config.ImageColumn(width="small"),
-                    "Revenue": st.column_config.NumberColumn(format="$%.2f"),
-                    "Share": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.2f%%"),
-                },
+            records = attribution["records"].copy()
+            records = records[records["Revenue"].gt(0)]
+            render_top_record_table(
+                records,
+                float(product_performance["Revenue"].sum()),
+                config,
             )
     else:
-        products = pd.DataFrame(data["products"], columns=["ASIN", "Revenue", "Orders", "Units"])
-        products.insert(0, "#", range(1, len(products) + 1))
-        products["Share"] = products["Revenue"].div(data["revenue"] or 1).mul(100)
-        st.info("Tải đủ order report để gộp theo Record ID và kiểm tra mapping 100%.")
-        st.dataframe(
-            products,
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "Revenue": st.column_config.NumberColumn(format="$%.2f"),
-                "Share": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.2f%%"),
-            },
+        st.warning(
+            "Chưa đồng bộ dữ liệu Order để lập Top 50 Record ID. Hãy chạy pipeline cập nhật "
+            "snapshot/dashboard_snapshot.csv."
         )
 
 elif page.startswith("03"):
@@ -1007,8 +1101,9 @@ elif page.startswith("03"):
 else:
     st.markdown("## Team KPI · Record-level")
     st.caption(
-        "Dữ liệu nhân sự lấy trực tiếp từ Lark Base. Revenue tháng 07/2026 được nối "
-        "từ ASIN của order report USD, đã loại Cancelled."
+        "Record ID, ASIN và workflow dùng ngày lịch gốc của Lark, không đổi timezone. "
+        "Orders, Units và Revenue dùng Purchase Time của Order Report đã đổi sang "
+        "America/Los_Angeles và đã loại Cancelled."
     )
     if team_access_granted():
         config, missing_secrets = lark_config()
@@ -1016,51 +1111,115 @@ else:
             st.error("Thiếu Streamlit Secrets: " + ", ".join(missing_secrets))
         else:
             st.info(
-                "Dashboard tự dùng dữ liệu Order tháng 07/2026 đã lưu. File gốc và thông tin khách hàng "
-                "không được lưu; chỉ lưu tổng hợp theo Store, ASIN và Record ID hint."
+                "Quy ước thời gian: KPI workflow lọc theo ngày trên bảng Lark; KPI bán hàng "
+                "lọc theo Purchase Month Los Angeles. Hai nguồn không chuyển timezone qua lại."
             )
-            upload_cols = st.columns(2)
-            with upload_cols[0]:
-                wrappiness_report = st.file_uploader(
-                    "Wrappiness · Order report tháng 07/2026",
-                    type=["txt", "tsv", "csv"],
-                    key="wrappiness_order_report",
-                )
-            with upload_cols[1]:
-                pawsionate_report = st.file_uploader(
-                    "Pawsionate · Order report tháng 07/2026",
-                    type=["txt", "tsv", "csv"],
-                    key="pawsionate_order_report",
-                )
-            required_uploads = {
-                "Wrappiness": wrappiness_report,
-                "Pawsionate": pawsionate_report,
-            }
+            order_snapshot_metadata = load_snapshot_metadata(PERSISTED_SNAPSHOT_PATH)
             selected_stores = (
                 ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
             )
-            performance, using_saved_orders = selected_order_performance(
-                selected_stores,
-                required_uploads,
-            )
+            performance = selected_order_performance(selected_stores)
             if performance.empty:
-                st.error("Chưa có dữ liệu Order đã lưu và chưa upload đủ report.")
+                st.error(
+                    "Chưa đồng bộ dữ liệu Order. Hãy chạy pipeline cập nhật "
+                    "snapshot/dashboard_snapshot.csv."
+                )
                 st.stop()
-            if using_saved_orders:
-                st.success("Đã nạp dữ liệu Order tháng 07/2026 từ bộ nhớ mặc định.")
-            hero_threshold = st.number_input(
-                "Hero revenue threshold / Record ID",
-                min_value=0.0,
-                value=1000.0,
-                step=100.0,
-                help="Ngưỡng ước lượng Hero có thể đổi theo tình hình kinh doanh.",
+            if "Date" not in performance.columns:
+                persisted_order_performance.clear()
+                performance = selected_order_performance(selected_stores)
+            if "Date" not in performance.columns:
+                # Streamlit may retain the previously imported snapshot_store module
+                # after a hot reload. Read the persisted CSV once to refresh its schema.
+                fresh_snapshot = pd.read_csv(
+                    PERSISTED_SNAPSHOT_PATH,
+                    dtype={"Store": str, "Date": str, "ASIN": str, "record_id_hint": str},
+                )
+                performance = fresh_snapshot[
+                    fresh_snapshot["Store"].isin(selected_stores)
+                ].copy()
+            if "Date" not in performance.columns:
+                # A legacy single-month snapshot can still be used for its report month.
+                performance["Date"] = REPORT_START
+                st.warning(
+                    "Snapshot cũ không có Purchase Date; dashboard đang gán toàn bộ dữ liệu "
+                    f"vào tháng {REPORT_START:%m/%Y}. Hãy cập nhật snapshot trước khi thêm tháng khác."
+                )
+            performance["Date"] = pd.to_datetime(performance["Date"], errors="coerce")
+            available_dates = performance["Date"].dropna()
+            if available_dates.empty:
+                st.error("Snapshot Order chưa có Purchase Date hợp lệ để lọc KPI theo tháng.")
+                st.stop()
+            performance["Purchase Month"] = performance["Date"].dt.strftime("%Y-%m")
+            available_months = sorted(performance["Purchase Month"].dropna().unique(), reverse=True)
+            selected_month = st.selectbox(
+                "Purchase month",
+                options=available_months,
+                format_func=lambda value: pd.Timestamp(f"{value}-01").strftime("Tháng %m/%Y"),
+                help="Revenue được lọc theo tháng của Purchase Date trong Order Report.",
+            )
+            performance = performance[performance["Purchase Month"].eq(selected_month)].copy()
+            if performance.empty:
+                st.warning("Không có Order hợp lệ trong tháng đã chọn.")
+                st.stop()
+            report_start = performance["Date"].min().normalize()
+            report_end = performance["Date"].max().normalize()
+            window_start = pd.Timestamp(f"{selected_month}-01")
+            window_end = (
+                window_start
+                + pd.offsets.MonthEnd(1)
+                + pd.Timedelta(days=1)
+                - pd.Timedelta(seconds=1)
+            )
+            st.success(
+                f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
+                f"Purchase Date Los Angeles hiện có {report_start:%d/%m/%Y}–"
+                f"{report_end:%d/%m/%Y}."
+            )
+            refresh_lark = st.button(
+                "Cập nhật snapshot Lark · tất cả bảng",
+                help=(
+                    "Đồng bộ TOTAL ASIN, MRND IDEA và CLIPARTS trong cùng một lần cập nhật; "
+                    "các lần mở sau chỉ đọc snapshot đã lưu."
+                ),
             )
             try:
-                with st.spinner("Đang đồng bộ Lark Base…"):
-                    lark = cached_lark_frames(config)
+                spinner_text = (
+                    "Đang cập nhật dữ liệu từ Lark Base…"
+                    if refresh_lark
+                    else "Đang nạp snapshot Lark gần nhất…"
+                )
+                with st.spinner(spinner_text):
+                    lark = latest_lark_frames(config, refresh=refresh_lark)
+                if lark.get("refresh_error"):
+                    st.warning(
+                        "Không cập nhật được Lark API; dashboard tiếp tục dùng snapshot gần nhất."
+                    )
+                if lark.get("snapshot_updated_at"):
+                    updated_at = pd.to_datetime(
+                        lark["snapshot_updated_at"], errors="coerce", utc=True
+                    )
+                    if pd.notna(updated_at):
+                        updated_at = updated_at.tz_convert("Asia/Ho_Chi_Minh")
+                        st.caption(
+                            f"Snapshot Lark cập nhật lần cuối: {updated_at:%d/%m/%Y %H:%M}"
+                        )
+                order_updated_at = pd.to_datetime(
+                    order_snapshot_metadata.get("source_updated_at")
+                    or order_snapshot_metadata.get("updated_at"),
+                    errors="coerce",
+                    utc=True,
+                )
+                if pd.notna(order_updated_at):
+                    order_updated_at = order_updated_at.tz_convert("Asia/Ho_Chi_Minh")
+                    st.caption(
+                        "Snapshot Order cập nhật từ report gần nhất: "
+                        f"{order_updated_at:%d/%m/%Y %H:%M} · "
+                        "Purchase Time đã chuẩn hóa America/Los_Angeles"
+                    )
                 attribution = prepare_attribution(lark, store, performance)
                 records = attribution["records"]
-                tables = employee_kpi_tables(attribution, hero_threshold)
+                tables = employee_kpi_tables(attribution, window_start, window_end)
 
                 counts = lark["record_counts"]
                 st.success(
@@ -1076,66 +1235,87 @@ else:
                         "Mở Field diagnostics bên dưới để kiểm tra tên cột."
                     )
                 else:
-                    ads_tested = int(in_report_month(records["testing_start_date"]).sum())
-                    listing_done = int(in_report_month(records["listing_done_date"]).sum())
-                    custom_done = int(in_report_month(records["custom_check_done_date"]).sum())
-                    idea_done = int(in_report_month(records["handover_date"]).sum())
-                    if not idea_done:
-                        idea_done = int(records.loc[records["idea_by"].ne(""), "record_id"].nunique())
+                    # Lark Metrics uses Record count after applying its date filters.
+                    # Keep one row per source record here; do not deduplicate by ASIN or
+                    # visible Record ID for these portfolio workflow cards.
+                    workflow_records = lark["workflow"]
+                    workflow_ideas = lark["workflow_ideas"]
+                    ads_tested_mask = in_lark_calendar_window(
+                        workflow_records["testing_start_date"], window_start, window_end
+                    )
+                    ads_tested = int(ads_tested_mask.sum())
+                    listing_done = int(
+                        in_lark_calendar_window(
+                            workflow_records["listing_done_date"], window_start, window_end
+                        ).sum()
+                    )
+                    custom_done = int(
+                        in_lark_calendar_window(
+                            workflow_records["custom_check_done_date"], window_start, window_end
+                        ).sum()
+                    )
+                    idea_done = int(
+                        in_lark_calendar_window(
+                            workflow_ideas["handover_date"], window_start, window_end
+                        ).sum()
+                    )
                     cliparts_month = attribution["cliparts"][
-                        in_report_month(attribution["cliparts"]["created_date"])
+                        in_lark_calendar_window(
+                            attribution["cliparts"]["created_date"], window_start, window_end
+                        )
                     ]
                     asset_total = int(cliparts_month["asset_points"].sum())
-                    launched = int(records["ads_launched"].sum())
-                    owned_ads = int(records.loc[records["ads_by"].ne(""), "record_id"].nunique())
-                    coverage = launched / owned_ads if owned_ads else 0
 
+                    st.markdown("### Workflow KPI từ Lark · toàn portfolio")
+                    st.caption(
+                        "Ngày KPI lấy nguyên từ Lark (không đổi timezone). "
+                        f"Chỉ đếm output hoàn thành trong {window_start:%d/%m/%Y}–"
+                        f"{window_end:%d/%m/%Y} theo Record count của Lark Metrics; lead time "
+                        "là Average trực tiếp trên các record sau khi lọc."
+                    )
                     st.markdown(
                         f"""
                         <div class="kpi-strip">
-                          <div><span>Qualified Ideas</span><strong>{idea_done:,}</strong><small>Unique Record ID</small></div>
-                          <div><span>Listing Done</span><strong>{listing_done:,}</strong><small>Listing Done Date</small></div>
-                          <div><span>Custom Check Done</span><strong>{custom_done:,}</strong><small>Qualified Custom ASIN</small></div>
-                          <div><span>Asset Points</span><strong>{asset_total:,}</strong><small>CLIPARTS · July</small></div>
-                          <div><span>Ads Tested</span><strong>{ads_tested:,}</strong><small>Testing Start Date</small></div>
+                          <div><span>Qualified Ideas</span><strong>{idea_done:,}</strong><small>MRND IDEA · Record count</small></div>
+                          <div><span>Listing Done</span><strong>{listing_done:,}</strong><small>TOTAL ASIN · Record count</small></div>
+                          <div><span>Custom Check Done</span><strong>{custom_done:,}</strong><small>TOTAL ASIN · Record count</small></div>
+                          <div><span>Asset Points</span><strong>{asset_total:,}</strong><small>CLIPARTS · selected window</small></div>
+                          <div><span>Ads Tested</span><strong>{ads_tested:,}</strong><small>TOTAL ASIN · Record count</small></div>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
 
-                    listing_lead = workflow_lead_days(
-                        records["date_pickup"], records["listing_done_date"]
+                    listing_lead_source = workflow_records.get(
+                        "listing_lead_time",
+                        pd.Series(index=workflow_records.index, dtype=float),
+                    )
+                    custom_lead_source = workflow_records.get(
+                        "custom_lead_time",
+                        pd.Series(index=workflow_records.index, dtype=float),
+                    )
+                    listing_lead = pd.to_numeric(
+                        listing_lead_source, errors="coerce"
+                    ).where(
+                        in_lark_calendar_window(
+                            workflow_records["listing_done_date"], window_start, window_end
+                        )
                     ).dropna()
-                    custom_lead = workflow_lead_days(
-                        records["listing_done_date"], records["custom_done_date"]
+                    custom_lead = pd.to_numeric(
+                        custom_lead_source, errors="coerce"
+                    ).where(
+                        in_lark_calendar_window(
+                            workflow_records["custom_check_done_date"], window_start, window_end
+                        )
                     ).dropna()
-                    pd_check_lead = workflow_lead_days(
-                        records["custom_done_date"], records["custom_check_done_date"]
-                    ).dropna()
-                    ads_lead = workflow_lead_days(
-                        records["custom_check_done_date"], records["testing_start_date"]
-                    ).dropna()
-                    lead_cols = st.columns(5)
+                    lead_cols = st.columns(2)
                     lead_cols[0].metric(
                         "Listing lead time",
                         f"{listing_lead.mean():.2f} days" if not listing_lead.empty else "—",
                     )
                     lead_cols[1].metric(
-                        "PS lead time",
+                        "Custom lead time",
                         f"{custom_lead.mean():.2f} days" if not custom_lead.empty else "—",
-                    )
-                    lead_cols[2].metric(
-                        "PD custom check",
-                        f"{pd_check_lead.mean():.2f} days" if not pd_check_lead.empty else "—",
-                    )
-                    lead_cols[3].metric(
-                        "Ads lead time",
-                        f"{ads_lead.mean():.2f} days" if not ads_lead.empty else "—",
-                    )
-                    lead_cols[4].metric(
-                        "Testing coverage",
-                        f"{coverage:.1%}",
-                        f"{launched:,} / {owned_ads:,} Record ID",
                     )
 
                     quality_cols = st.columns(3)
@@ -1147,15 +1327,35 @@ else:
                     quality_cols[1].metric(
                         "Attributed revenue",
                         money(float(records["Revenue"].sum())),
-                        f"{records['record_id'].nunique():,} Record ID",
+                        f"{records.loc[records['Revenue'].gt(0), 'record_id'].nunique():,} sold Record ID",
                     )
+                    winner_count = int(records["Revenue"].ge(5000).sum())
                     quality_cols[2].metric(
-                        "Hero estimate",
-                        f'{int(records["Revenue"].ge(hero_threshold).sum()):,}',
-                        f"Revenue ≥ {money(hero_threshold)}",
+                        "Winner Records",
+                        f"{winner_count:,}",
+                        "Revenue ≥ $5,000 / Record ID",
                     )
 
-                    st.markdown("### KPI theo nhân sự")
+                    st.markdown("### KPI theo nhân sự · Lark calendar + Purchase Month LA")
+                    st.caption(
+                        "Idea theo MRND IDEA Pickup Date; Product output và Product Support theo "
+                        "Custom Check Done Date; cohort Sold/Validated/New Revenue từ ngày 20 tháng "
+                        "trước đến cuối time window."
+                    )
+                    st.warning(
+                        "ACOS theo nhân sự đang N/A vì chưa có Ads Report theo ASIN. "
+                        "Cần map Ads Report ASIN → TOTAL ASIN → Ads By để cộng Ads Spend, "
+                        "Ads Sales và tính ACOS."
+                    )
+                    with st.expander("Quy định KPI đang áp dụng", expanded=False):
+                        st.markdown(
+                            """
+- **Idea:** Qualified Ideas theo Pickup Date; Validated Rate dùng cohort từ ngày 20 tháng trước đến cuối kỳ và ngưỡng ≥10 Units; Revenue là toàn bộ doanh thu tháng của portfolio Idea.
+- **Product:** Qualified ASINs theo Custom Check Done Date; Sold Rate và New Revenue dùng cohort Listing Done từ ngày 20 tháng trước; Portfolio Revenue là toàn bộ portfolio đang quản lý.
+- **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
+- **Ads:** Winner là Record ID có Revenue ≥ $5,000. ACOS cần Ads Report theo ASIN để map sang Ads By trong TOTAL ASIN.
+                            """
+                        )
                     for title, table in tables.items():
                         with st.expander(title, expanded=True):
                             display = table.copy()
@@ -1166,10 +1366,11 @@ else:
                                 not in {
                                     "Nhân sự",
                                     "Revenue",
+                                    "New_Revenue",
                                     "Portfolio_Revenue",
                                     "Validated_Rate",
                                     "Sold_Rate",
-                                    "Testing_Coverage",
+                                    "ACOS",
                                     "Listing_Lead_Days",
                                     "Custom_Lead_Days",
                                     "PD_Check_Days",
@@ -1177,18 +1378,29 @@ else:
                             ]
                             for column in integer_columns:
                                 display[column] = display[column].fillna(0).round().astype(int)
+                            for money_column in ("Revenue", "New_Revenue", "Portfolio_Revenue"):
+                                if money_column in display:
+                                    display[money_column] = display[money_column].fillna(0).map(
+                                        lambda value: f"${float(value):,.2f}"
+                                    )
+                            for rate_column in (
+                                "Validated_Rate",
+                                "Sold_Rate",
+                                "ACOS",
+                            ):
+                                if rate_column in display:
+                                    display[rate_column] = display[rate_column].map(
+                                        lambda value: (
+                                            "N/A"
+                                            if pd.isna(value)
+                                            else f"{float(value):.1%}"
+                                        )
+                                    )
                             st.dataframe(
                                 display,
                                 hide_index=True,
                                 width="stretch",
                                 column_config={
-                                    "Revenue": st.column_config.NumberColumn(format="$%.2f"),
-                                    "Portfolio_Revenue": st.column_config.NumberColumn(format="$%.2f"),
-                                    "Validated_Rate": st.column_config.NumberColumn(format="%.1%%"),
-                                    "Sold_Rate": st.column_config.NumberColumn(format="%.1%%"),
-                                    "Testing_Coverage": st.column_config.ProgressColumn(
-                                        min_value=0, max_value=1, format="%.1%%"
-                                    ),
                                     "Listing_Lead_Days": st.column_config.NumberColumn(format="%.2f"),
                                     "Custom_Lead_Days": st.column_config.NumberColumn(format="%.2f"),
                                     "PD_Check_Days": st.column_config.NumberColumn(format="%.2f"),

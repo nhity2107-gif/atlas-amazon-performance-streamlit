@@ -9,13 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-from cryptography.fernet import Fernet
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from snapshot_store import SNAPSHOT_COLUMNS, build_snapshot_envelope, encrypt_snapshot
+from snapshot_store import SNAPSHOT_COLUMNS, save_snapshot
 
 
 ORDER_COLUMNS = {
@@ -151,12 +150,34 @@ def prepare_order_rows(path: Path, store: str, scope: str) -> pd.DataFrame:
     return result[result["asin"].ne("")].drop_duplicates("order_item_id", keep="last")
 
 
-def ingest_order_report(db_path: Path, path: Path, store: str, scope: str) -> dict[str, object]:
+def ingest_order_report(
+    db_path: Path,
+    path: Path,
+    store: str,
+    scope: str,
+    replace_start: str | None = None,
+    replace_end: str | None = None,
+) -> dict[str, object]:
+    if scope not in {"daily", "weekly", "monthly"}:
+        raise ValueError(f"Scope không hợp lệ: {scope}")
+    if bool(replace_start) != bool(replace_end):
+        raise ValueError("replace_start và replace_end phải được truyền cùng nhau.")
+    if scope == "daily" and replace_start:
+        raise ValueError("Khoảng thay thế chỉ dùng cho report weekly hoặc monthly.")
     rows = prepare_order_rows(path, store, scope)
     if rows.empty:
         raise ValueError("Report không có order hợp lệ để lưu.")
     period_start = str(rows["purchase_date_pacific"].min())
     period_end = str(rows["purchase_date_pacific"].max())
+    replacement_start = replace_start or period_start
+    replacement_end = replace_end or period_end
+    if replacement_start > replacement_end:
+        raise ValueError("Ngày bắt đầu khoảng thay thế phải trước hoặc bằng ngày kết thúc.")
+    if replace_start and (period_start < replacement_start or period_end > replacement_end):
+        raise ValueError(
+            "Report có order nằm ngoài khoảng thay thế "
+            f"{replacement_start} đến {replacement_end}."
+        )
     imported_at = datetime.now(timezone.utc).isoformat()
     values = list(rows.itertuples(index=False, name=None))
     connection = connect(db_path)
@@ -165,7 +186,7 @@ def ingest_order_report(db_path: Path, path: Path, store: str, scope: str) -> di
             if scope in {"weekly", "monthly"}:
                 connection.execute(
                     "DELETE FROM order_items WHERE store = ? AND purchase_date_pacific BETWEEN ? AND ?",
-                    (store, period_start, period_end),
+                    (store, replacement_start, replacement_end),
                 )
             connection.executemany(
                 """
@@ -211,8 +232,8 @@ def ingest_order_report(db_path: Path, path: Path, store: str, scope: str) -> di
                     scope,
                     path.name,
                     hashlib.sha256(path.read_bytes()).hexdigest(),
-                    period_start,
-                    period_end,
+                    replacement_start if scope in {"weekly", "monthly"} else period_start,
+                    replacement_end if scope in {"weekly", "monthly"} else period_end,
                     len(rows),
                     active_rows,
                 ),
@@ -223,6 +244,11 @@ def ingest_order_report(db_path: Path, path: Path, store: str, scope: str) -> di
         "store": store,
         "scope": scope,
         "period": f"{period_start} to {period_end}",
+        "replaced_period": (
+            f"{replacement_start} to {replacement_end}"
+            if scope in {"weekly", "monthly"}
+            else None
+        ),
         "rows": len(rows),
         "active_rows": active_rows,
     }
@@ -231,7 +257,6 @@ def ingest_order_report(db_path: Path, path: Path, store: str, scope: str) -> di
 def export_snapshot(
     db_path: Path,
     output_path: Path,
-    key_file: Path,
     period_start: str,
     period_end: str,
 ) -> dict[str, object]:
@@ -239,7 +264,8 @@ def export_snapshot(
     try:
         items = pd.read_sql_query(
             """
-            SELECT store, asin, record_id_hint, revenue, amazon_order_id, quantity
+            SELECT store, purchase_date_pacific, asin, record_id_hint,
+                   revenue, amazon_order_id, quantity, imported_at
             FROM order_items
             WHERE lower(order_status) <> 'cancelled'
               AND currency = 'USD'
@@ -252,8 +278,9 @@ def export_snapshot(
         connection.close()
     if items.empty:
         raise ValueError("Database chưa có order hợp lệ trong kỳ xuất snapshot.")
+    source_updated_at = str(items["imported_at"].max())
     summary = (
-        items.groupby(["store", "asin"], as_index=False)
+        items.groupby(["store", "purchase_date_pacific", "asin"], as_index=False)
         .agg(
             Revenue=("revenue", "sum"),
             Orders=("amazon_order_id", "nunique"),
@@ -263,55 +290,53 @@ def export_snapshot(
                 lambda values: next((str(value) for value in values if str(value).strip()), ""),
             ),
         )
-        .rename(columns={"store": "Store", "asin": "ASIN"})
+        .rename(
+            columns={
+                "store": "Store",
+                "purchase_date_pacific": "Date",
+                "asin": "ASIN",
+            }
+        )
         .reindex(columns=SNAPSHOT_COLUMNS)
-        .sort_values(["Store", "Revenue"], ascending=[True, False])
+        .sort_values(["Store", "Date", "Revenue"], ascending=[True, True, False])
     )
     summary["Revenue"] = summary["Revenue"].round(2)
     summary["Orders"] = summary["Orders"].astype(int)
     summary["Units"] = summary["Units"].astype(int)
-    key = key_file.read_text(encoding="ascii").strip()
-    generated_at = datetime.now(timezone.utc).isoformat()
-    envelope = build_snapshot_envelope(
+    save_snapshot(
+        output_path,
         summary,
-        period_start=period_start,
-        period_end=period_end,
-        generated_at=generated_at,
+        source_updated_at=source_updated_at,
     )
-    token = encrypt_snapshot(envelope, key)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(token)
     return {
         "rows": len(summary),
         "revenue": round(float(summary["Revenue"].sum()), 2),
         "period": f"{period_start} to {period_end}",
+        "source_updated_at": source_updated_at,
         "output": str(output_path),
     }
-
-
-def generate_key(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        raise FileExistsError(f"Key đã tồn tại: {path}")
-    path.write_bytes(Fernet.generate_key())
-
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description="Atlas local data pipeline")
     subparsers = root.add_subparsers(dest="command", required=True)
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--db", type=Path, required=True)
-    key_parser = subparsers.add_parser("generate-key")
-    key_parser.add_argument("--key-file", type=Path, required=True)
     ingest_parser = subparsers.add_parser("ingest-order")
     ingest_parser.add_argument("--db", type=Path, required=True)
     ingest_parser.add_argument("--file", type=Path, required=True)
     ingest_parser.add_argument("--store", required=True, choices=["Wrappiness", "Pawsionate"])
     ingest_parser.add_argument("--scope", required=True, choices=["daily", "weekly", "monthly"])
+    ingest_parser.add_argument(
+        "--replace-start",
+        help="Ngày Pacific đầu khoảng cần thay thế (weekly/monthly, YYYY-MM-DD)",
+    )
+    ingest_parser.add_argument(
+        "--replace-end",
+        help="Ngày Pacific cuối khoảng cần thay thế (weekly/monthly, YYYY-MM-DD)",
+    )
     export_parser = subparsers.add_parser("export-snapshot")
     export_parser.add_argument("--db", type=Path, required=True)
     export_parser.add_argument("--output", type=Path, required=True)
-    export_parser.add_argument("--key-file", type=Path, required=True)
     export_parser.add_argument("--start", required=True)
     export_parser.add_argument("--end", required=True)
     return root
@@ -322,13 +347,19 @@ def main() -> None:
     if args.command == "init":
         connect(args.db).close()
         print({"database": str(args.db), "status": "ready"})
-    elif args.command == "generate-key":
-        generate_key(args.key_file)
-        print({"key_file": str(args.key_file), "status": "created"})
     elif args.command == "ingest-order":
-        print(ingest_order_report(args.db, args.file, args.store, args.scope))
+        print(
+            ingest_order_report(
+                args.db,
+                args.file,
+                args.store,
+                args.scope,
+                args.replace_start,
+                args.replace_end,
+            )
+        )
     elif args.command == "export-snapshot":
-        print(export_snapshot(args.db, args.output, args.key_file, args.start, args.end))
+        print(export_snapshot(args.db, args.output, args.start, args.end))
 
 
 if __name__ == "__main__":

@@ -4,4 +4,6 @@ data/july_2026_order_summary.csv
 database/
 reports/
 .secrets/
+.streamlit/secrets.toml
 snapshot/*.plain.*
+snapshot/lark/
