@@ -38,6 +38,7 @@ TOTAL_ASIN_ALIASES = {
     "managed_by": ["Managed By", "Manage By", "Listing By"],
     "custom_by": ["Custom By", "PS By", "Product Support"],
     "ads_by": ["Ads By", "Ads Executive"],
+    "fulfill_by": ["Fulfill By", "Fulfilled By", "Fulfil By"],
     "ads_status": ["Ads Status", "Advertising Status"],
     "date_pickup": ["Date Pickup", "Pickup Date"],
     "listing_done_date": ["Listing Done Date", "Listing Done"],
@@ -470,8 +471,11 @@ def total_asin_frame(
                 )
                 row["image_record_id"] = str(record.get("record_id") or "")
                 row["image_field_id"] = image_field_id
-                for owner in ("managed_by", "custom_by", "ads_by", "ads_status"):
-                    row[owner] = display_value(fields.get(mapping[owner])) if mapping[owner] else ""
+                for owner in (
+                    "managed_by", "custom_by", "ads_by", "fulfill_by", "ads_status"
+                ):
+                    field_name = mapping.get(owner)
+                    row[owner] = display_value(fields.get(field_name)) if field_name else ""
                 for date_name in (
                     "date_pickup",
                     "listing_done_date",
@@ -497,6 +501,7 @@ def total_asin_frame(
         "managed_by",
         "custom_by",
         "ads_by",
+        "fulfill_by",
         "ads_status",
         "date_pickup",
         "listing_done_date",

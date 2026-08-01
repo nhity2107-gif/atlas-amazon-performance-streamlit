@@ -2,6 +2,20 @@
 
 Streamlit dashboard for July 2026 Amazon order, Ads and employee KPI reporting.
 
+## Standard local input database
+
+All raw inputs follow `data/input/<YYYY-MM>/<store>/{orders,ads}`. Filenames use
+`YYYY-MM__<store>__<dataset>__<scope>.<ext>`; see
+[`data/input/README.md`](data/input/README.md) for the complete contract. Raw
+files and monthly manifests are local-only and ignored by Git.
+
+Validate a month before importing:
+
+```bash
+python scripts/validate_input_layout.py --month 2026-07 --store wrappiness --require-all-ads
+python scripts/validate_input_layout.py --month 2026-07 --store pawsionate
+```
+
 ## Persistent Order data workflow
 
 Raw Amazon reports and the SQLite database remain only under
@@ -34,6 +48,40 @@ Time semantics are intentionally separate: Lark workflow KPI uses the calendar
 date returned by Lark without timezone conversion, while Order, Revenue and
 Units use Amazon Purchase Time converted to `America/Los_Angeles` before daily
 aggregation and monthly filtering.
+
+The Overview splits Net Revenue into FBA and FBM using TOTAL ASIN `Fulfill By`.
+It maps by ASIN first and falls back to the Order snapshot `record_id_hint`, so
+FBA + FBM reconciles to Net Revenue for the selected store.
+
+## Local Ads allocation
+
+Complete Sponsored Products, Sponsored Brands and Sponsored Display workbooks
+are processed locally and saved under the gitignored `snapshot/ads/`. SP maps
+with `Advertised ASIN`; SB/SD map with the first ASIN in `Campaign Name` so a
+collection campaign total is allocated once. Campaigns carrying the
+`Nhi-Support` marker are assigned directly to a separate row. FBA is identified
+from TOTAL ASIN `Fulfill By = FBA`, then
+assigned from `Custom By`: Trương Ý Nhi becomes `Nhi-FBA` and Phương Linh/MRnD
+becomes `Linh-FBA`. The Ads snapshot stores multiple Store/Month imports.
+
+Confirmed source corrections are centralized in `fulfillment_rules.py`.
+`B0F1XZT333` and `B0F1XPZ1JX` are treated as FBA even while TOTAL ASIN still
+marks them as FBM, so Overview revenue and Ads allocation remain consistent.
+
+```bash
+python scripts/import_ads_reports.py \
+  --sponsored-products "data/input/2026-07/wrappiness/ads/2026-07__wrappiness__ads__sp-advertised-product.xlsx" \
+  --sponsored-brands "data/input/2026-07/wrappiness/ads/2026-07__wrappiness__ads__sb-campaign.xlsx" \
+  --sponsored-display "data/input/2026-07/wrappiness/ads/2026-07__wrappiness__ads__sd-campaign.xlsx" \
+  --month 2026-07 --store Wrappiness
+
+python scripts/import_ads_reports.py \
+  --sponsored-products "data/input/2026-07/pawsionate/ads/2026-07__pawsionate__ads__sp-advertised-product.xlsx" \
+  --month 2026-07 --store Pawsionate
+```
+
+Pawsionate accepts a complete SP workbook without SB/SD because those two Ads
+types are declared `not-applicable` for this store and month.
 
 Example update:
 

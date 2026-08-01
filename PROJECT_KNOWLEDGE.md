@@ -37,6 +37,9 @@ phải cập nhật cả code, test và tài liệu này.
 - Chỉ dùng currency USD.
 - Loại toàn bộ dòng `Cancelled`.
 - `Revenue = Item Price + Shipping Price`.
+- Tab Tổng quan tách Revenue theo `Fulfill By` từ TOTAL ASIN. Ưu tiên map trực
+  tiếp ASIN; nếu ASIN Order chưa khớp thì fallback qua `record_id_hint` để lấy
+  Fulfill By của Record ID. FBA + FBM phải bằng Net Revenue.
 - Daily import upsert theo `order-item-id`.
 - Weekly/monthly import thay thế toàn bộ store + khoảng ngày Los Angeles được
   chỉ định trước khi insert report mới.
@@ -84,10 +87,12 @@ Trang Sản phẩm:
 
 ## 5. Workflow KPI toàn portfolio
 
-Cách tính phải giống Lark Metrics: lọc record theo ngày rồi dùng `Record count`,
-không deduplicate theo ASIN hoặc visible Record ID.
+Cách tính phải giống Lark Metrics theo từng loại KPI. Qualified Ideas lọc theo
+ngày rồi đếm **unique Record ID**; các output ở TOTAL ASIN dùng `Record count`
+của dòng ASIN sau khi lọc ngày.
 
-- **Qualified Ideas:** số record MRND IDEA có `Date Pickup` trong tháng.
+- **Qualified Ideas:** số unique Record ID trong MRND IDEA có ít nhất một
+  `Date Pickup` trong tháng.
 - **Listing Done:** số record TOTAL ASINs có `Listing Done Date` trong tháng.
 - **Custom Check Done:** số record TOTAL ASINs có `Custom Check Done Date` trong
   tháng.
@@ -144,9 +149,49 @@ không deduplicate theo ASIN hoặc visible Record ID.
 - Ads Report phải map `Ads Report ASIN -> TOTAL ASIN ASIN -> Record ID/Ads By`.
 - `Ads Spend = tổng Spend`; `Ads Sales = tổng Sales`;
   `ACOS = Ads Spend / Ads Sales`.
-- Hiện chưa có Ads Report theo ASIN trong snapshot, vì vậy ACOS nhân sự vẫn N/A.
+- `TACOS = Ads Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership
+  Revenue. Revenue FBA được chuyển khỏi Ads By gốc sang `Nhi-FBA`/`Linh-FBA`.
+  `Nhi-Support` chỉ là phần Ads thực thi hỗ trợ, không nhận Revenue và TACOS phải
+  là `N/A`.
+- Wrappiness dùng đủ ba workbook SP/SB/SD. SP map trực tiếp bằng `Advertised
+  ASIN`; SB/SD map bằng ASIN đầu tiên trong `Campaign Name`, vì tổng campaign
+  collection chỉ được phân bổ một lần. Marker campaign `Nhi-Support` được gán
+  trực tiếp sang hàng riêng, không cộng thêm report support cũ.
+- FBA phải lấy từ TOTAL ASIN `Fulfill By = FBA`, không suy ra từ hậu tố product
+  trong Ads report. Ownership FBA lấy từ `Custom By`: `Trương Ý Nhi` →
+  `Nhi-FBA`; `Phương Linh/MRnD` → `Linh-FBA`.
+- Hai correction đã xác nhận trong TOTAL ASIN: `B0F1XZT333` và `B0F1XPZ1JX`
+  đang bị mark nhầm `FBM` nhưng phải được xử lý là `FBA`. Override này áp dụng
+  đồng nhất cho phân bổ Ads, TACOS và Revenue FBA/FBM cho đến khi Lark được sửa.
+- Việc phân bổ phải bảo toàn tổng Spend, Sales và Orders của cả ba report.
+
+### Revenue milestone theo ownership
+
+- Bảng Idea, Product và Ads đều hiển thị thêm số unique Record ID đạt Revenue
+  tháng `>= $1,000`, `>= $3,000`, `>= $5,000`, `>= $10,000`, `>= $15,000`
+  và `>= $20,000`.
+- Milestone dùng Purchase Month của Order snapshot đã đổi sang Los Angeles.
+- Đây là chỉ số toàn portfolio ownership, không giới hạn Pickup/Listing/Testing
+  cohort. Revenue của toàn bộ ASIN cùng Record ID được cộng trước khi so ngưỡng.
+- Idea dùng `Idea By`; Product dùng `Managed By`; Ads dùng `Ads By`, riêng FBA
+  tiếp tục phân bổ sang `Nhi-FBA`/`Linh-FBA`. `Nhi-Support` không có ownership
+  Order Revenue nên ba milestone bằng 0.
 
 ## 8. Snapshot và cập nhật dữ liệu
+
+### Raw input chuẩn
+
+- Cấu trúc bắt buộc: `data/input/<YYYY-MM>/<store>/{orders,ads}`.
+- Store slug chỉ dùng `wrappiness` hoặc `pawsionate`.
+- Tên file dùng `YYYY-MM__<store>__<dataset>__<scope>.<ext>`; tháng là kỳ dữ
+  liệu, không phải ngày download.
+- Order chuẩn: `YYYY-MM__<store>__order__monthly.txt`.
+- Ads chuẩn: `sp-advertised-product`, `sb-campaign`, `sd-campaign`.
+- Raw input và `manifest.csv` từng tháng chỉ lưu local, bị gitignore. Manifest
+  ghi trạng thái, dung lượng và SHA-256 để phát hiện việc thay file nguồn.
+- Chạy `scripts/validate_input_layout.py` trước pipeline; Wrappiness yêu cầu đủ
+  ba Ads report. Pawsionate không phát sinh SB/SD nên hai nguồn này có trạng
+  thái `not-applicable`; SP dùng workbook Advertised Product đầy đủ.
 
 ### Order snapshot
 
@@ -166,6 +211,19 @@ không deduplicate theo ASIN hoặc visible Record ID.
   sản phẩm/nhân sự nội bộ. Không push snapshot này nếu chưa xác nhận repository
   và chính sách bảo mật phù hợp.
 
+### Ads snapshot
+
+- Snapshot Ads schema v2 nằm trong `snapshot/ads/` và bị gitignore; mỗi dòng có
+  `Month` và `Store`, import mới chỉ thay đúng cặp Store/Month tương ứng.
+- Wrappiness sinh từ đủ SP/SB/SD. Pawsionate sinh từ workbook SP
+  Advertised Product; SB/SD là `not-applicable`, vì store không phát sinh hai
+  loại Ads này.
+- Mọi dòng phát sinh Spend/Sales/Orders phải trích được ASIN và map được Ads By
+  trong TOTAL ASIN. Campaign nhiều ASIN dùng ASIN đầu tiên làm primary mapping
+  và không nhân campaign total theo số ASIN.
+- Dashboard chỉ dùng snapshot khi month/store khớp lựa chọn hiện tại. All Stores
+  cộng các store đã import rồi tính lại ACOS từ tổng Spend/Sales.
+
 ## 9. Bảo mật và repository
 
 - `.streamlit/secrets.toml` luôn bị gitignore.
@@ -178,24 +236,49 @@ không deduplicate theo ASIN hoặc visible Record ID.
 
 ## 10. Trạng thái dữ liệu kiểm tra gần nhất — 07/2026
 
-- Order Revenue: `$180,517.89`; Tổng quan và Team KPI cùng hiển thị `$180,518`.
-- Orders tổng hợp: 4,429.
-- Units: 4,912.
-- Active ASINs: 897.
-- Qualified Ideas: 122.
+- Full Order Revenue: `$181,763.46` (`Wrappiness $180,821.46` + `Pawsionate
+  $942.00`); Tổng quan và Team KPI phải dùng cùng snapshot này.
+- Orders tổng hợp: 4,454.
+- Units: 4,945.
+- Active ASINs: 903; snapshot có 2,705 dòng tổng hợp theo Store/Date/ASIN.
+- FBA Revenue sau correction: `$4,805.60`, 268 orders, 289 units, 11 ASINs.
+- FBM Revenue sau correction: `$176,957.86`, 4,186 orders, 4,656 units,
+  892 ASINs. FBA + FBM = `$181,763.46` Net Revenue.
+- Qualified Ideas: 117 unique Record ID (122 dòng MRND IDEA trong kỳ, gồm 5
+  dòng trùng Record ID).
 - Listing Done: 289.
 - Custom Check Done: 314.
 - Ads Tested: 48.
 - Listing Lead Time: 8.08 ngày.
 - Custom Lead Time: 13.35 ngày.
-- Lark snapshot: TOTAL ASIN 15,612 records; MRND IDEA 297 records; CLIPARTS
+- KPI nhân sự đã đối soát: Gary có 117 Qualified Ideas và 6/119 Validated
+  Records; Phương Linh có 115 Qualified ASINs và 17/138 Sold Records;
+  Sammie/Nhật Hạ có 196 Qualified ASINs và 20/195 Sold Records. Validated/Sold
+  đều gộp Units của toàn bộ ASIN theo Record ID trước khi áp ngưỡng `>=10`;
+  một Record ID có nhiều dòng ngày chỉ cần ít nhất một ngày nằm trong cohort.
+- Số Record ID đạt tổng Units `>=10` trên toàn portfolio: Gary 6, Trương Ý Nhi
+  3; Phương Linh 50; Sammie/Nhật Hạ 40. Trong cohort 20/06–31/07, số KPI lần
+  lượt là Gary 6/119, Phương Linh 17/138 và Sammie/Nhật Hạ 20/195.
+- Wrappiness SP: 848 ASIN phát sinh; Spend `$35,889.12`; Sales `$97,594.02`;
+  Orders `2,927`; weighted ACOS `36.77%`.
+- Wrappiness SB: 114 primary ASIN phát sinh; Spend `$2,931.96`; Sales
+  `$8,079.27`; Orders `285`; weighted ACOS `36.29%`. SD không phát sinh.
+- Tổng Wrappiness SP+SB+SD: Spend `$38,821.08`; Sales `$105,673.29`; Orders
+  `3,212`; weighted ACOS `36.74%`.
+- Nhi-Support: 23 ASIN; 43 campaign; Spend `$619.34`; Sales `$1,198.88`;
+  ACOS `51.66%`.
+- Lark snapshot: TOTAL ASIN 15,611 records; MRND IDEA 297 records; CLIPARTS
   128 records.
-- Automated tests: 18 tests passing tại thời điểm cập nhật tài liệu.
+- Wrappiness FBA trong đủ ba report: `Nhi-FBA` 7 ASIN / Spend `$873.25` / Sales
+  `$2,521.24` / ACOS `34.64%`; `Linh-FBA` 2 ASIN / Spend `$34.75` / Sales
+  `$104.72` / ACOS `33.18%`. Tổng FBA là Spend `$908.00`, Sales `$2,625.96`.
+- Pawsionate Ads report: 8 ASIN / Spend `$156.19` / Sales `$342.68`; có 1
+  `Nhi-FBA` với Spend `$1.80`, chưa có Sales nên ACOS `N/A`.
+- Automated tests: 26 tests passing tại thời điểm cập nhật tài liệu.
 
 ## 11. Điểm còn mở cần xác nhận hoặc bổ sung
 
-- Cần Ads Report theo ASIN để thay dữ liệu Ads demo và tính Spend, Sales, ACOS
-  theo Ads By.
+- Ads snapshot tháng 07/2026 đã có đủ Wrappiness và Pawsionate.
 - Cần xác nhận có được phép đưa snapshot Lark nội bộ lên Git hay tiếp tục chỉ lưu
   local/runtime.
 - Khi `Custom Done Date` đủ dữ liệu, đổi filter Custom Lead Time từ Custom Check

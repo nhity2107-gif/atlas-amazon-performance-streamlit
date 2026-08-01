@@ -1,9 +1,14 @@
 __pycache__/
 *.pyc
 data/july_2026_order_summary.csv
+# Raw monthly inputs are local-only. Keep the convention document tracked.
+data/input/*
+!data/input/README.md
+data/archive/
 database/
 reports/
 .secrets/
 .streamlit/secrets.toml
 snapshot/*.plain.*
 snapshot/lark/
+snapshot/ads/

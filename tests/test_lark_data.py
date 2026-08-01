@@ -28,6 +28,7 @@ class LarkDataTests(unittest.TestCase):
                     "ASIN": "B0ABCDEFGH, B0H1234567",
                     "Managed By": [{"name": "Sammie"}],
                     "Ads By": [{"name": "Domi"}],
+                    "Fulfill By": "FBA",
                     "Ads Status": "Main Test",
                     "Listing Lead Time": {"type": 2, "value": [4.25]},
                     "Custom Lead Time": {"type": 2, "value": [2]},
@@ -41,6 +42,7 @@ class LarkDataTests(unittest.TestCase):
         self.assertTrue(frame["ads_launched"].all())
         self.assertEqual(frame.loc[0, "listing_lead_time"], 4.25)
         self.assertEqual(frame.loc[0, "custom_lead_time"], 2)
+        self.assertEqual(frame.loc[0, "fulfill_by"], "FBA")
 
     def test_workflow_frames_keep_one_row_per_lark_record(self) -> None:
         total_mapping = {

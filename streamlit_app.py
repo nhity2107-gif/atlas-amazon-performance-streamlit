@@ -8,6 +8,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from ads_data import load_ads_snapshot, normalize_person, select_ads_summary
+from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
 from lark_snapshot_store import (
     SCHEMA_VERSION as LARK_SNAPSHOT_SCHEMA_VERSION,
@@ -15,7 +17,12 @@ from lark_snapshot_store import (
     save_lark_snapshot,
     snapshot_version as lark_snapshot_version,
 )
-from product_data import records_from_order_hints, top_record_id_frame
+from product_data import (
+    fulfillment_revenue_frame,
+    records_from_order_hints,
+    revenue_milestone_counts,
+    top_record_id_frame,
+)
 from snapshot_store import (
     SnapshotError,
     empty_snapshot,
@@ -26,6 +33,7 @@ from snapshot_store import (
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
 PERSISTED_LARK_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "lark"
+PERSISTED_ADS_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "ads"
 
 
 st.set_page_config(
@@ -133,18 +141,18 @@ STORES = {
 }
 
 ADS = {
-    "Wrappiness": dict(spend=36673.65, sales=99380.14, orders=3028, impressions=3687409, clicks=46441),
-    "Pawsionate": dict(spend=152.17, sales=342.68, orders=8, impressions=25919, clicks=224),
+    "Wrappiness": dict(spend=38821.08, sales=105673.29, orders=3212, impressions=3906940, clicks=49380),
+    "Pawsionate": dict(spend=156.19, sales=342.68, orders=8, impressions=25919, clicks=224),
 }
 
 ADS_BY_TYPE = {
     "Wrappiness": {
-        "SP": dict(spend=34041.91, sales=92526.08, orders=2779, impressions=3273038, clicks=41630),
-        "SB": dict(spend=2631.74, sales=6854.06, orders=249, impressions=414301, clicks=4811),
-        "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=70, clicks=0),
+        "SP": dict(spend=35889.12, sales=97594.02, orders=2927, impressions=3458754, clicks=44049),
+        "SB": dict(spend=2931.96, sales=8079.27, orders=285, impressions=448112, clicks=5331),
+        "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=74, clicks=0),
     },
     "Pawsionate": {
-        "SP": dict(spend=152.17, sales=342.68, orders=8, impressions=25919, clicks=224),
+        "SP": dict(spend=156.19, sales=342.68, orders=8, impressions=25919, clicks=224),
         "SB": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
         "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
     },
@@ -486,7 +494,7 @@ def first_nonempty(series: pd.Series) -> str:
 
 
 def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) -> dict:
-    total = lark["total"].copy()
+    total = apply_fulfillment_overrides(lark["total"])
     ideas = lark["ideas"].copy()
     cliparts = lark["cliparts"].copy()
     performance = performance.copy()
@@ -506,6 +514,7 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
         return {
             "total": total,
             "records": pd.DataFrame(),
+            "ideas": ideas,
             "cliparts": cliparts,
             "coverage": 0.0,
             "duplicate_asins": 0,
@@ -601,6 +610,7 @@ def prepare_attribution(lark: dict, store_name: str, performance: pd.DataFrame) 
     return {
         "total": total,
         "records": records,
+        "ideas": ideas,
         "attributed_asins": attributed_asins,
         "cliparts": cliparts,
         "coverage": attributed_revenue / total_revenue if total_revenue else 0.0,
@@ -613,6 +623,8 @@ def employee_kpi_tables(
     attribution: dict,
     window_start: pd.Timestamp,
     window_end: pd.Timestamp,
+    ads_performance: pd.DataFrame | None = None,
+    ads_imports: list[dict] | None = None,
 ) -> dict[str, pd.DataFrame]:
     records = attribution["records"].copy()
     attributed_asins = attribution.get("attributed_asins", pd.DataFrame()).copy()
@@ -626,43 +638,78 @@ def employee_kpi_tables(
     def owner_records(column: str) -> pd.DataFrame:
         return records[records[column].fillna("").str.strip().ne("")].copy()
 
-    idea = owner_records("idea_by")
-    idea["qualified"] = in_lark_calendar_window(
-        idea["handover_date"], window_start, window_end
+    idea_events = attribution.get("ideas", pd.DataFrame()).copy()
+    idea_events["qualified"] = in_lark_calendar_window(
+        idea_events["handover_date"], window_start, window_end
     )
-    idea["in_cohort"] = in_lark_calendar_window(
-        idea["handover_date"], cohort_start, window_end
+    idea_events["in_cohort"] = in_lark_calendar_window(
+        idea_events["handover_date"], cohort_start, window_end
     )
+    idea = (
+        idea_events.groupby("record_id", as_index=False)
+        .agg(
+            idea_by=("idea_by", first_nonempty),
+            qualified=("qualified", "any"),
+            in_cohort=("in_cohort", "any"),
+        )
+        .merge(
+            records[["record_id", "Revenue", "Units"]],
+            on="record_id",
+            how="left",
+        )
+    )
+    idea[["Revenue", "Units"]] = idea[["Revenue", "Units"]].fillna(0)
+    idea = idea[idea["idea_by"].fillna("").str.strip().ne("")].copy()
+    idea["validated"] = idea["Units"].ge(10)
     idea["cohort_validated"] = idea["in_cohort"] & idea["validated"]
     idea_table = (
         idea.groupby("idea_by", as_index=False)
         .agg(
             Qualified_Ideas=("qualified", "sum"),
+            Portfolio_Records_10_Units=("validated", "sum"),
             Cohort_Records=("in_cohort", "sum"),
             Validated_Records=("cohort_validated", "sum"),
             Revenue=("Revenue", "sum"),
         )
         .rename(columns={"idea_by": "Nhân sự"})
     )
+    idea_table = idea_table.merge(
+        revenue_milestone_counts(idea, "idea_by"), on="Nhân sự", how="left"
+    )
     idea_table["Validated_Rate"] = idea_table["Validated_Records"].div(
         idea_table["Cohort_Records"].where(idea_table["Cohort_Records"].ne(0))
     )
 
-    product = owner_records("managed_by")
-    product["in_cohort"] = in_lark_calendar_window(
-        product["listing_done_date"], cohort_start, window_end
+    product_events = attributed_asins.copy()
+    product_events["listing_in_cohort"] = in_lark_calendar_window(
+        product_events["listing_done_date"], cohort_start, window_end
     )
+    product = (
+        product_events.groupby("record_id", as_index=False)
+        .agg(
+            managed_by=("managed_by", first_nonempty),
+            in_cohort=("listing_in_cohort", "any"),
+            Revenue=("Revenue", "sum"),
+            Units=("Units", "sum"),
+        )
+    )
+    product = product[product["managed_by"].fillna("").str.strip().ne("")].copy()
+    product["validated"] = product["Units"].ge(10)
     product["cohort_sold"] = product["in_cohort"] & product["validated"]
     product["new_revenue"] = product["Revenue"].where(product["in_cohort"], 0)
     product_table = (
         product.groupby("managed_by", as_index=False)
         .agg(
+            Portfolio_Records_10_Units=("validated", "sum"),
             Cohort_Records=("in_cohort", "sum"),
             Sold_Records=("cohort_sold", "sum"),
             New_Revenue=("new_revenue", "sum"),
             Portfolio_Revenue=("Revenue", "sum"),
         )
         .rename(columns={"managed_by": "Nhân sự"})
+    )
+    product_table = product_table.merge(
+        revenue_milestone_counts(product, "managed_by"), on="Nhân sự", how="left"
     )
     product_table["Sold_Rate"] = product_table["Sold_Records"].div(
         product_table["Cohort_Records"].where(product_table["Cohort_Records"].ne(0))
@@ -738,12 +785,88 @@ def employee_kpi_tables(
         )
         .rename(columns={"ads_by": "Nhân sự"})
     )
-    ads_table["ACOS"] = pd.NA
+    # Portfolio Revenue follows Ads ownership, except FBA which follows Custom By.
+    # Nhi-Support is an execution-only adjustment and has no owned Order Revenue.
+    revenue_asins = attributed_asins.copy()
+    revenue_asins = revenue_asins[
+        revenue_asins["ads_by"].fillna("").str.strip().ne("")
+    ]
+    revenue_asins["Revenue_Owner"] = revenue_asins["ads_by"]
+    fba_mask = revenue_asins.get(
+        "fulfill_by", pd.Series("", index=revenue_asins.index)
+    ).fillna("").str.strip().str.casefold().eq("fba")
+    normalized_custom = revenue_asins.loc[fba_mask, "custom_by"].map(normalize_person)
+    revenue_asins.loc[
+        fba_mask & normalized_custom.reindex(revenue_asins.index, fill_value="").str.contains(
+            "truong y nhi", regex=False
+        ),
+        "Revenue_Owner",
+    ] = "Nhi-FBA"
+    revenue_asins.loc[
+        fba_mask & normalized_custom.reindex(revenue_asins.index, fill_value="").str.contains(
+            "phuong linh", regex=False
+        ),
+        "Revenue_Owner",
+    ] = "Linh-FBA"
+    ads_revenue_milestones = revenue_milestone_counts(
+        revenue_asins.rename(columns={"Revenue_Owner": "milestone_owner"}),
+        "milestone_owner",
+    )
+    allocated_revenue = (
+        revenue_asins.groupby("Revenue_Owner", as_index=False)
+        .agg(Allocated_Portfolio_Revenue=("Revenue", "sum"))
+        .rename(columns={"Revenue_Owner": "Nhân sự"})
+    )
+    ads_table = ads_table.merge(allocated_revenue, on="Nhân sự", how="outer")
+    ads_table = ads_table.merge(ads_revenue_milestones, on="Nhân sự", how="outer")
+    ads_table["Portfolio_Revenue"] = ads_table["Allocated_Portfolio_Revenue"].combine_first(
+        ads_table["Portfolio_Revenue"]
+    )
+    ads_table = ads_table.drop(columns=["Allocated_Portfolio_Revenue"])
+    if ads_performance is not None and not ads_performance.empty:
+        ads_metrics = ads_performance[
+            ["Nhân sự", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"]
+        ].copy()
+        ads_table = ads_table.merge(ads_metrics, on="Nhân sự", how="outer")
+        for column in (
+            "New_Winner_Created",
+            "Cohort_Records",
+            "New_Revenue",
+            "Portfolio_Revenue",
+            "Ads_Spend",
+            "Ads_Sales",
+            "Ads_Orders",
+        ):
+            ads_table[column] = pd.to_numeric(ads_table[column], errors="coerce").fillna(0)
+    else:
+        ads_table["Ads_Spend"] = pd.NA
+        ads_table["Ads_Sales"] = pd.NA
+        ads_table["Ads_Orders"] = pd.NA
+        ads_table["ACOS"] = pd.NA
+    ads_table["TACOS"] = pd.to_numeric(ads_table["Ads_Spend"], errors="coerce").div(
+        pd.to_numeric(ads_table["Portfolio_Revenue"], errors="coerce").where(
+            pd.to_numeric(ads_table["Portfolio_Revenue"], errors="coerce").ne(0)
+        )
+    )
+
+    milestone_columns = [
+        "Portfolio_Records_1000_Revenue",
+        "Portfolio_Records_3000_Revenue",
+        "Portfolio_Records_5000_Revenue",
+        "Portfolio_Records_10000_Revenue",
+        "Portfolio_Records_15000_Revenue",
+        "Portfolio_Records_20000_Revenue",
+    ]
+    for table in (idea_table, product_table, ads_table):
+        for column in milestone_columns:
+            table[column] = pd.to_numeric(table[column], errors="coerce").fillna(0)
 
     idea_table = idea_table[
         [
             "Nhân sự",
             "Qualified_Ideas",
+            "Portfolio_Records_10_Units",
+            *milestone_columns,
             "Cohort_Records",
             "Validated_Records",
             "Validated_Rate",
@@ -754,6 +877,8 @@ def employee_kpi_tables(
         [
             "Nhân sự",
             "Qualified_ASINs",
+            "Portfolio_Records_10_Units",
+            *milestone_columns,
             "Cohort_Records",
             "Sold_Records",
             "Sold_Rate",
@@ -766,7 +891,12 @@ def employee_kpi_tables(
         [
             "Nhân sự",
             "New_Winner_Created",
+            *milestone_columns,
+            "Ads_Spend",
+            "Ads_Sales",
+            "Ads_Orders",
             "ACOS",
+            "TACOS",
             "Portfolio_Revenue",
             "Cohort_Records",
             "New_Revenue",
@@ -858,14 +988,48 @@ if page.startswith("01"):
     cols[2].metric("Units", f'{data["units"]:,}', f'{data["units"] / data["orders"]:.2f} units / order')
     cols[3].metric("Active ASINs", f'{data["asins"]:,}', "Có doanh thu USD")
 
+    overview_stores = list(STORES) if store == "All Stores" else [store]
+    overview_performance = selected_order_performance(overview_stores)
+    overview_lark = persisted_lark_frames(
+        lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
+        LARK_SNAPSHOT_SCHEMA_VERSION,
+    )
+    fulfillment = fulfillment_revenue_frame(
+        overview_performance,
+        overview_lark["total"] if overview_lark else pd.DataFrame(),
+    )
+    if not fulfillment.empty:
+        fulfillment_index = fulfillment.set_index("Fulfill By")
+        fulfillment_cols = st.columns(2)
+        for column, fulfillment_type in zip(fulfillment_cols, ("FBA", "FBM")):
+            row = (
+                fulfillment_index.loc[fulfillment_type]
+                if fulfillment_type in fulfillment_index.index
+                else pd.Series({"Revenue": 0, "Orders": 0, "ASINs": 0})
+            )
+            revenue = float(row["Revenue"])
+            column.metric(
+                f"{fulfillment_type} revenue",
+                money(revenue),
+                f'{revenue / data["revenue"]:.1%} · {int(row["Orders"]):,} orders · {int(row["ASINs"]):,} ASINs',
+            )
+        unmapped = (
+            fulfillment_index.loc["Unmapped"]
+            if "Unmapped" in fulfillment_index.index
+            else None
+        )
+        if unmapped is not None and float(unmapped["Revenue"]):
+            st.warning(
+                f'Có {int(unmapped["ASINs"]):,} ASIN chưa map Fulfill By, '
+                f'tương ứng {money(float(unmapped["Revenue"]))} Revenue.'
+            )
+
     left, right = st.columns([2, 1])
     with left:
         st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">DAILY REVENUE</div><h3>Revenue theo ngày</h3>', unsafe_allow_html=True)
         st.bar_chart(daily_frame(store)["Revenue"], color="#ff7b2c", height=310)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
-        overview_stores = list(STORES) if store == "All Stores" else [store]
-        overview_performance = selected_order_performance(overview_stores)
         store_share = (
             overview_performance.groupby("Store", as_index=False)["Revenue"].sum()
             if not overview_performance.empty
@@ -1218,8 +1382,19 @@ else:
                         "Purchase Time đã chuẩn hóa America/Los_Angeles"
                     )
                 attribution = prepare_attribution(lark, store, performance)
+                ads_snapshot = load_ads_snapshot(PERSISTED_ADS_SNAPSHOT_DIR)
+                ads_summary, ads_imports = select_ads_summary(
+                    ads_snapshot, selected_month, store
+                )
+                ads_snapshot_matches = not ads_summary.empty
                 records = attribution["records"]
-                tables = employee_kpi_tables(attribution, window_start, window_end)
+                tables = employee_kpi_tables(
+                    attribution,
+                    window_start,
+                    window_end,
+                    ads_summary,
+                    ads_imports,
+                )
 
                 counts = lark["record_counts"]
                 st.success(
@@ -1235,11 +1410,9 @@ else:
                         "Mở Field diagnostics bên dưới để kiểm tra tên cột."
                     )
                 else:
-                    # Lark Metrics uses Record count after applying its date filters.
-                    # Keep one row per source record here; do not deduplicate by ASIN or
-                    # visible Record ID for these portfolio workflow cards.
+                    # Qualified Ideas is a unique Record ID metric. TOTAL ASIN workflow
+                    # outputs follow Lark's source-row Record count after date filters.
                     workflow_records = lark["workflow"]
-                    workflow_ideas = lark["workflow_ideas"]
                     ads_tested_mask = in_lark_calendar_window(
                         workflow_records["testing_start_date"], window_start, window_end
                     )
@@ -1255,9 +1428,12 @@ else:
                         ).sum()
                     )
                     idea_done = int(
-                        in_lark_calendar_window(
-                            workflow_ideas["handover_date"], window_start, window_end
-                        ).sum()
+                        lark["ideas"].loc[
+                            in_lark_calendar_window(
+                                lark["ideas"]["handover_date"], window_start, window_end
+                            ),
+                            "record_id",
+                        ].nunique()
                     )
                     cliparts_month = attribution["cliparts"][
                         in_lark_calendar_window(
@@ -1270,13 +1446,14 @@ else:
                     st.caption(
                         "Ngày KPI lấy nguyên từ Lark (không đổi timezone). "
                         f"Chỉ đếm output hoàn thành trong {window_start:%d/%m/%Y}–"
-                        f"{window_end:%d/%m/%Y} theo Record count của Lark Metrics; lead time "
+                        f"{window_end:%d/%m/%Y}. Qualified Ideas đếm unique Record ID; "
+                        "Listing/Custom/Ads dùng Record count của TOTAL ASIN; lead time "
                         "là Average trực tiếp trên các record sau khi lọc."
                     )
                     st.markdown(
                         f"""
                         <div class="kpi-strip">
-                          <div><span>Qualified Ideas</span><strong>{idea_done:,}</strong><small>MRND IDEA · Record count</small></div>
+                          <div><span>Qualified Ideas</span><strong>{idea_done:,}</strong><small>MRND IDEA · Unique Record ID</small></div>
                           <div><span>Listing Done</span><strong>{listing_done:,}</strong><small>TOTAL ASIN · Record count</small></div>
                           <div><span>Custom Check Done</span><strong>{custom_done:,}</strong><small>TOTAL ASIN · Record count</small></div>
                           <div><span>Asset Points</span><strong>{asset_total:,}</strong><small>CLIPARTS · selected window</small></div>
@@ -1342,23 +1519,84 @@ else:
                         "Custom Check Done Date; cohort Sold/Validated/New Revenue từ ngày 20 tháng "
                         "trước đến cuối time window."
                     )
-                    st.warning(
-                        "ACOS theo nhân sự đang N/A vì chưa có Ads Report theo ASIN. "
-                        "Cần map Ads Report ASIN → TOTAL ASIN → Ads By để cộng Ads Spend, "
-                        "Ads Sales và tính ACOS."
-                    )
+                    if ads_snapshot_matches:
+                        diagnostics = [item.get("diagnostics", {}) for item in ads_imports]
+                        support_asins = sum(int(item.get("support_asins", 0)) for item in diagnostics)
+                        support_spend = sum(float(item.get("support_spend", 0)) for item in diagnostics)
+                        support_sales = sum(float(item.get("support_sales", 0)) for item in diagnostics)
+                        fba_asins = sum(int(item.get("fba_asins", 0)) for item in diagnostics)
+                        imported_stores = ", ".join(item.get("store", "") for item in ads_imports)
+                        st.success(
+                            "Ads snapshot đã map 100% SP/SB/SD ASIN → TOTAL ASIN → "
+                            f"Ads By cho {imported_stores}. Đã chuyển {support_asins} ASIN / "
+                            f"${support_spend:,.2f} Spend / ${support_sales:,.2f} Sales sang "
+                            f"Nhi-Support và tách {fba_asins} ASIN FBA sang Nhi-FBA/Linh-FBA."
+                        )
+                        catalog_fba_asins = set(
+                            attribution["total"].loc[
+                                attribution["total"]["fulfill_by"]
+                                .fillna("")
+                                .str.strip()
+                                .str.casefold()
+                                .eq("fba"),
+                                "asin",
+                            ]
+                        )
+                        reported_fba_asins = {
+                            asin
+                            for item in diagnostics
+                            for values in item.get("fba_asins_by_assignee", {}).values()
+                            for asin in values
+                        }
+                        missing_fba_asins = sorted(catalog_fba_asins - reported_fba_asins)
+                        if missing_fba_asins:
+                            st.warning(
+                                f"Advertised Product hiện chỉ có {len(reported_fba_asins):,}/"
+                                f"{len(catalog_fba_asins):,} ASIN FBA trong TOTAL ASIN. "
+                                f"{len(missing_fba_asins):,} ASIN không có trong Ads report nên "
+                                "không phát sinh Spend/Sales trong bảng này: "
+                                + ", ".join(missing_fba_asins)
+                            )
+                    else:
+                        st.warning(
+                            "Chưa có Ads snapshot khớp Store/Purchase Month nên ACOS theo "
+                            "nhân sự đang N/A."
+                        )
                     with st.expander("Quy định KPI đang áp dụng", expanded=False):
                         st.markdown(
                             """
-- **Idea:** Qualified Ideas theo Pickup Date; Validated Rate dùng cohort từ ngày 20 tháng trước đến cuối kỳ và ngưỡng ≥10 Units; Revenue là toàn bộ doanh thu tháng của portfolio Idea.
-- **Product:** Qualified ASINs theo Custom Check Done Date; Sold Rate và New Revenue dùng cohort Listing Done từ ngày 20 tháng trước; Portfolio Revenue là toàn bộ portfolio đang quản lý.
+- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units ≥10. Cột Portfolio ≥10 là số Record ID đạt ngưỡng trong toàn bộ ownership.
+- **Product:** Qualified ASINs là unique ASIN theo Custom Check Done Date; `Listing Cohort` là unique Record ID có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units ≥10; cột Portfolio ≥10 là toàn bộ ownership.
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
-- **Ads:** Winner là Record ID có Revenue ≥ $5,000. ACOS cần Ads Report theo ASIN để map sang Ads By trong TOTAL ASIN.
+- **Ads:** Winner là Record ID có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD; SP dùng Advertised ASIN, SB/SD dùng ASIN đầu tiên trong Campaign Name để map ownership mà không nhân đôi campaign total. Campaign Nhi-Support được chuyển sang hàng riêng và không nhận Portfolio Revenue/TACOS. FBA lấy theo `Fulfill By = FBA`, sau đó phân bổ `Nhi-FBA`/`Linh-FBA` theo `Custom By`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
+- **Revenue milestones:** các cột `Record IDs ≥$1K/≥$3K/≥$5K/≥$10K/≥$15K/≥$20K` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có Revenue trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
                             """
                         )
                     for title, table in tables.items():
                         with st.expander(title, expanded=True):
                             display = table.copy()
+                            display = display.rename(
+                                columns={
+                                    "Qualified_Ideas": "Qualified_Ideas (Pickup Date)",
+                                    "Portfolio_Records_10_Units": "Portfolio_Record_IDs (≥10 Units)",
+                                    "Portfolio_Records_1000_Revenue": "Record_IDs (≥$1K Revenue)",
+                                    "Portfolio_Records_3000_Revenue": "Record_IDs (≥$3K Revenue)",
+                                    "Portfolio_Records_5000_Revenue": "Record_IDs (≥$5K Revenue)",
+                                    "Portfolio_Records_10000_Revenue": "Record_IDs (≥$10K Revenue)",
+                                    "Portfolio_Records_15000_Revenue": "Record_IDs (≥$15K Revenue)",
+                                    "Portfolio_Records_20000_Revenue": "Record_IDs (≥$20K Revenue)",
+                                    "Cohort_Records": (
+                                        f"Pickup_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                        if title.startswith("Idea")
+                                        else f"Listing_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                        if title.startswith("Product ·")
+                                        else f"Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                    ),
+                                    "Validated_Records": "Validated_Records (≥10 Units)",
+                                    "Sold_Records": "Sold_Records (≥10 Units)",
+                                    "Qualified_ASINs": "Qualified_ASINs (unique)",
+                                }
+                            )
                             integer_columns = [
                                 column
                                 for column in display.columns
@@ -1368,9 +1606,12 @@ else:
                                     "Revenue",
                                     "New_Revenue",
                                     "Portfolio_Revenue",
+                                    "Ads_Spend",
+                                    "Ads_Sales",
                                     "Validated_Rate",
                                     "Sold_Rate",
                                     "ACOS",
+                                    "TACOS",
                                     "Listing_Lead_Days",
                                     "Custom_Lead_Days",
                                     "PD_Check_Days",
@@ -1378,7 +1619,13 @@ else:
                             ]
                             for column in integer_columns:
                                 display[column] = display[column].fillna(0).round().astype(int)
-                            for money_column in ("Revenue", "New_Revenue", "Portfolio_Revenue"):
+                            for money_column in (
+                                "Revenue",
+                                "New_Revenue",
+                                "Portfolio_Revenue",
+                                "Ads_Spend",
+                                "Ads_Sales",
+                            ):
                                 if money_column in display:
                                     display[money_column] = display[money_column].fillna(0).map(
                                         lambda value: f"${float(value):,.2f}"
@@ -1387,6 +1634,7 @@ else:
                                 "Validated_Rate",
                                 "Sold_Rate",
                                 "ACOS",
+                                "TACOS",
                             ):
                                 if rate_column in display:
                                     display[rate_column] = display[rate_column].map(
