@@ -14,9 +14,14 @@ from fulfillment_rules import apply_fulfillment_overrides
 
 ASIN_PATTERN = re.compile(r"(?i)(?<![A-Z0-9])(B0[A-Z0-9]{8})(?![A-Z0-9])")
 PRODUCT_ASIN_PATTERN = re.compile(r"(?i)^\s*(B0[A-Z0-9]{8})(?:-|$)")
-SUPPORT_PATTERN = re.compile(
-    r"(?i)nhi\s*[-/]?\s*support|nhiamz\s*[-/]?\s*support|support.*nhi"
-)
+SUPPORT_PATTERN = re.compile(r"(?i)support")
+EXECUTION_PATTERNS = {
+    "Linh": re.compile(r"(?i)LINH(?:\s*(?:AMZ|MRND))?"),
+    "Hieu": re.compile(r"(?i)HIEU(?:\s*(?:AMZ|MRND))?"),
+    "Ha": re.compile(
+        r"(?i)(?:^|[^A-Z0-9])HA(?:\s*(?:AMZ|MRND))?(?:[^A-Z0-9]|$)"
+    ),
+}
 SUMMARY_COLUMNS = [
     "Nhân sự",
     "ASINs",
@@ -212,10 +217,20 @@ def build_ads_employee_summary_from_reports(
     rows["Nhân sự"] = rows["ads_by"].fillna("").astype(str).str.strip()
     support_mask = rows["Campaign name"].str.contains(SUPPORT_PATTERN, na=False)
     rows.loc[support_mask, "Nhân sự"] = "Nhi-Support"
+    execution_masks: dict[str, pd.Series] = {}
+    assigned_execution = support_mask.copy()
+    for assignee, pattern in EXECUTION_PATTERNS.items():
+        marker_mask = (
+            rows["Campaign name"].str.contains(pattern, na=False)
+            & ~assigned_execution
+        )
+        rows.loc[marker_mask, "Nhân sự"] = assignee
+        execution_masks[assignee] = marker_mask
+        assigned_execution |= marker_mask
 
     fba_mask = (
         rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
-        & ~support_mask
+        & ~assigned_execution
     )
     normalized_custom = rows.loc[fba_mask, "custom_by"].fillna("").map(normalize_person)
     rows.loc[fba_mask, "Nhân sự"] = ""
@@ -272,6 +287,16 @@ def build_ads_employee_summary_from_reports(
         }
     fba = rows.loc[fba_mask]
     support = rows.loc[support_mask]
+    execution_by_assignee = {
+        assignee: {
+            "campaigns": int(rows.loc[mask, "Campaign name"].nunique()),
+            "asins": int(rows.loc[mask, "ASIN"].nunique()),
+            "spend": round(float(rows.loc[mask, "ad_spend"].sum()), 2),
+            "sales": round(float(rows.loc[mask, "ad_sales"].sum()), 2),
+            "orders": int(rows.loc[mask, "ad_orders"].sum()),
+        }
+        for assignee, mask in execution_masks.items()
+    }
     diagnostics = {
         "report_rows": int(len(rows)),
         "report_asins": int(rows["ASIN"].nunique()),
@@ -282,6 +307,7 @@ def build_ads_employee_summary_from_reports(
         "support_sales": round(float(support["ad_sales"].sum()), 2),
         "support_orders": int(support["ad_orders"].sum()),
         "support_asin_list": sorted(support["ASIN"].unique().tolist()),
+        "execution_by_assignee": execution_by_assignee,
         "fba_asins": int(fba["ASIN"].nunique()),
         "fba_spend": round(float(fba["ad_spend"].sum()), 2),
         "fba_sales": round(float(fba["ad_sales"].sum()), 2),

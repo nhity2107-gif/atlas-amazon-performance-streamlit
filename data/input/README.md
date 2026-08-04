@@ -57,9 +57,12 @@ For Pawsionate, an SP-only workbook import is valid when SB and SD are declared
 | SD campaign | Campaign | Amazon report month | First ASIN in `Campaign Name` |
 | Lark | API snapshot, not a raw file in this folder | Original Lark calendar date | TOTAL ASIN / MRND IDEA / CLIPARTS |
 
-Every non-zero Ads row must resolve to an ASIN and then to `TOTAL ASIN`. A
-campaign carrying the `Nhi-Support` marker is allocated directly to the
-`Nhi-Support` row. FBA is determined from `TOTAL ASIN Fulfill By`, with confirmed
+Every non-zero Ads row must resolve to an ASIN and then to `TOTAL ASIN`. Every
+campaign whose name contains `Support` (case-insensitive) is allocated directly
+to the `Nhi-Support` row. Exact campaign tokens `LINH`, `HIEU` and `HA` are
+allocated to separate execution rows before FBA allocation. Joined forms such
+as `LINHAMZ`, `HIEUAMZ`, `HIEUMRND` and `HAMRND` are also recognized. FBA is determined
+from `TOTAL ASIN Fulfill By`, with confirmed
 overrides kept in `fulfillment_rules.py`.
 
 ## Lifecycle

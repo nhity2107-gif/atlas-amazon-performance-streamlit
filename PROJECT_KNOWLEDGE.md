@@ -117,15 +117,18 @@ của dòng ASIN sau khi lọc ngày.
 
 - Qualified Ideas: Pickup Date trong tháng, weight 40%.
 - Validated Rate: Validated Records / Cohort Records, weight 30%.
-- Revenue: toàn bộ Revenue tháng của portfolio do nhân sự Idea sở hữu,
+- Revenue: tổng Revenue tháng của toàn bộ ASIN thuộc ownership của nhân sự Idea,
   weight 30%.
 
 ### Team Product
 
 - Qualified ASINs: ASIN có Custom Check Done Date trong tháng, weight 30%.
 - Sold Rate: Sold Records / Cohort Records của Listing Done cohort, weight 20%.
-- New Revenue: Revenue tháng từ sản phẩm thuộc Listing Done cohort, weight 30%.
-- Portfolio Revenue: toàn bộ Revenue tháng của portfolio Managed By,
+- New Revenue: Revenue tháng chỉ từ các ASIN thuộc Managed By có chính
+  `Custom Check Done Date` trong cohort ngày 20 tháng trước đến cuối tháng,
+  weight 30%.
+- Portfolio Revenue: tổng Revenue tháng của toàn bộ ASIN thuộc ownership
+  Managed By,
   weight 20%.
 - Listing Lead Days: average Listing Lead Time của ASIN hoàn thành Listing trong
   tháng.
@@ -144,19 +147,27 @@ của dòng ASIN sau khi lọc ngày.
 - New Winner Created: Record ID lần đầu đạt ngưỡng Winner trong phạm vi quản lý,
   weight 20%.
 - ACOS portfolio tháng, weight 25%.
-- Portfolio Revenue tháng, weight 20%.
-- New Revenue từ Testing Start cohort, weight 35%.
+- Portfolio Revenue: tổng Revenue trong Purchase Month của toàn bộ ASIN thuộc
+  Ads ownership, weight 20%.
+- New Revenue: tổng Revenue trong Purchase Month chỉ từ các ASIN có chính
+  `Custom Check Done Date` trong cohort ngày 20 tháng trước đến cuối tháng hiện
+  tại, phân bổ theo Ads revenue ownership, weight 35%.
 - Ads Report phải map `Ads Report ASIN -> TOTAL ASIN ASIN -> Record ID/Ads By`.
 - `Ads Spend = tổng Spend`; `Ads Sales = tổng Sales`;
   `ACOS = Ads Spend / Ads Sales`.
 - `TACOS = Ads Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership
   Revenue. Revenue FBA được chuyển khỏi Ads By gốc sang `Nhi-FBA`/`Linh-FBA`.
-  `Nhi-Support` chỉ là phần Ads thực thi hỗ trợ, không nhận Revenue và TACOS phải
-  là `N/A`.
+  `Nhi-Support`, `Linh`, `Hieu` và `Ha` là các hàng Ads thực thi, không nhận
+  Revenue và TACOS phải là `N/A`.
 - Wrappiness dùng đủ ba workbook SP/SB/SD. SP map trực tiếp bằng `Advertised
   ASIN`; SB/SD map bằng ASIN đầu tiên trong `Campaign Name`, vì tổng campaign
-  collection chỉ được phân bổ một lần. Marker campaign `Nhi-Support` được gán
-  trực tiếp sang hàng riêng, không cộng thêm report support cũ.
+  collection chỉ được phân bổ một lần. Mọi campaign có chữ `Support` (không
+  phân biệt hoa/thường, kể cả viết liền như `NhiSupport`) được gán trực tiếp
+  sang hàng `Nhi-Support`, không cộng thêm report support cũ.
+- Marker campaign có `LINH`, `HIEU`, `HA` (kể cả viết liền như `LINHAMZ`,
+  `HIEUAMZ`, `HIEUMRND`, `HAMRND`) được gán lần lượt sang hàng
+  thực thi `Linh`, `Hieu`, `Ha`; Spend/Sales/Orders của các campaign này bị loại
+  khỏi Ads By gốc nhưng tổng report phải được bảo toàn.
 - FBA phải lấy từ TOTAL ASIN `Fulfill By = FBA`, không suy ra từ hậu tố product
   trong Ads report. Ownership FBA lấy từ `Custom By`: `Trương Ý Nhi` →
   `Nhi-FBA`; `Phương Linh/MRnD` → `Linh-FBA`.
@@ -174,8 +185,8 @@ của dòng ASIN sau khi lọc ngày.
 - Đây là chỉ số toàn portfolio ownership, không giới hạn Pickup/Listing/Testing
   cohort. Revenue của toàn bộ ASIN cùng Record ID được cộng trước khi so ngưỡng.
 - Idea dùng `Idea By`; Product dùng `Managed By`; Ads dùng `Ads By`, riêng FBA
-  tiếp tục phân bổ sang `Nhi-FBA`/`Linh-FBA`. `Nhi-Support` không có ownership
-  Order Revenue nên ba milestone bằng 0.
+  tiếp tục phân bổ sang `Nhi-FBA`/`Linh-FBA`. Các hàng thực thi `Nhi-Support`,
+  `Linh`, `Hieu`, `Ha` không có ownership Order Revenue nên milestone bằng 0.
 
 ## 8. Snapshot và cập nhật dữ liệu
 
@@ -259,22 +270,32 @@ của dòng ASIN sau khi lọc ngày.
 - Số Record ID đạt tổng Units `>=10` trên toàn portfolio: Gary 6, Trương Ý Nhi
   3; Phương Linh 50; Sammie/Nhật Hạ 40. Trong cohort 20/06–31/07, số KPI lần
   lượt là Gary 6/119, Phương Linh 17/138 và Sammie/Nhật Hạ 20/195.
-- Wrappiness SP: 848 ASIN phát sinh; Spend `$35,889.12`; Sales `$97,594.02`;
-  Orders `2,927`; weighted ACOS `36.77%`.
-- Wrappiness SB: 114 primary ASIN phát sinh; Spend `$2,931.96`; Sales
-  `$8,079.27`; Orders `285`; weighted ACOS `36.29%`. SD không phát sinh.
-- Tổng Wrappiness SP+SB+SD: Spend `$38,821.08`; Sales `$105,673.29`; Orders
-  `3,212`; weighted ACOS `36.74%`.
-- Nhi-Support: 23 ASIN; 43 campaign; Spend `$619.34`; Sales `$1,198.88`;
-  ACOS `51.66%`.
+- Wrappiness SP: 848 ASIN phát sinh; Spend `$35,889.43`; Sales `$98,274.42`;
+  Orders `2,946`; weighted ACOS `36.52%`.
+- Wrappiness SB: 114 primary ASIN phát sinh; Spend `$2,931.99`; Sales
+  `$8,380.83`; Orders `294`; weighted ACOS `34.98%`. SD không phát sinh.
+- Tổng Wrappiness SP+SB+SD: Spend `$38,821.42`; Sales `$106,655.25`; Orders
+  `3,240`; weighted ACOS `36.40%`.
+- Nhi-Support: 25 ASIN; 46 campaign; Spend `$651.38`; Sales `$1,224.86`;
+  ACOS `53.18%`.
+- Hàng thực thi sau khi đọc marker campaign trên cả hai store: `Linh` 92 campaign /
+  Spend `$391.79` / Sales `$450.14`; `Hieu` 69 campaign / Spend `$254.23` /
+  Sales `$100.87`; `Ha` 91 campaign / Spend `$321.26` / Sales `$336.54`.
 - Lark snapshot: TOTAL ASIN 15,611 records; MRND IDEA 297 records; CLIPARTS
   128 records.
-- Wrappiness FBA trong đủ ba report: `Nhi-FBA` 7 ASIN / Spend `$873.25` / Sales
-  `$2,521.24` / ACOS `34.64%`; `Linh-FBA` 2 ASIN / Spend `$34.75` / Sales
-  `$104.72` / ACOS `33.18%`. Tổng FBA là Spend `$908.00`, Sales `$2,625.96`.
+- Wrappiness FBA trong đủ ba report sau khi ưu tiên marker nhân sự: `Nhi-FBA`
+  7 ASIN / Spend `$873.25` / Sales `$2,521.24`. Campaign FBA trước đây của
+  `B0F32KP4K3` nay mang marker `LINH`, nên được ưu tiên sang hàng thực thi `Linh`
+  và không còn phát sinh `Linh-FBA`.
 - Pawsionate Ads report: 8 ASIN / Spend `$156.19` / Sales `$342.68`; có 1
   `Nhi-FBA` với Spend `$1.80`, chưa có Sales nên ACOS `N/A`.
-- Automated tests: 26 tests passing tại thời điểm cập nhật tài liệu.
+- Ads New Revenue theo từng ASIN có Custom Check Done trong cohort 20/06–31/07
+  trên All Stores: `Danni/Quỳnh Như/MRnD` 258 ASIN / `$46,244.66`;
+  `Kaythlyn/Phương Trinh/MRnD` 213 ASIN / `$10,426.70`;
+  `Trương Ý Nhi` 49 ASIN / `$6,160.41`.
+- Tổng New ASIN trong cohort 20/06–31/07 có Product ownership: `520`; có Ads
+  ownership: `520`. Hai tổng đếm unique ASIN, không đếm Record ID.
+- Automated tests: 30 tests passing tại thời điểm cập nhật tài liệu.
 
 ## 11. Điểm còn mở cần xác nhận hoặc bổ sung
 

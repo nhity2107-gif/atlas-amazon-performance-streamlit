@@ -58,8 +58,12 @@ FBA + FBM reconciles to Net Revenue for the selected store.
 Complete Sponsored Products, Sponsored Brands and Sponsored Display workbooks
 are processed locally and saved under the gitignored `snapshot/ads/`. SP maps
 with `Advertised ASIN`; SB/SD map with the first ASIN in `Campaign Name` so a
-collection campaign total is allocated once. Campaigns carrying the
-`Nhi-Support` marker are assigned directly to a separate row. FBA is identified
+collection campaign total is allocated once. Every campaign whose name contains
+`Support` (case-insensitive, including forms such as `NhiSupport`) is assigned
+directly to the separate `Nhi-Support` row. Campaign markers containing `LINH`,
+`HIEU` or `HA` are likewise assigned to execution-only rows `Linh`, `Hieu` and
+`Ha`, including joined forms such as `HIEUAMZ` and `HIEUMRND`. Those metrics are
+removed from the original Ads By owner. FBA is identified
 from TOTAL ASIN `Fulfill By = FBA`, then
 assigned from `Custom By`: Trương Ý Nhi becomes `Nhi-FBA` and Phương Linh/MRnD
 becomes `Linh-FBA`. The Ads snapshot stores multiple Store/Month imports.

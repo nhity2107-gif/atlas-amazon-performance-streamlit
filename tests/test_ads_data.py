@@ -16,6 +16,85 @@ from ads_data import (
 
 
 class AdsDataTests(unittest.TestCase):
+    def test_any_campaign_containing_support_maps_to_nhi_support(self) -> None:
+        reports = [pd.DataFrame([
+            {
+                "ASIN": "B000000001", "Campaign name": "Owner campaign",
+                "Ads Type": "SP", "ad_spend": 100.0, "ad_sales": 400.0,
+                "ad_orders": 8, "impressions": 1000, "clicks": 100,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "July NhiSupport campaign",
+                "Ads Type": "SP", "ad_spend": 10.0, "ad_sales": 20.0,
+                "ad_orders": 1, "impressions": 100, "clicks": 10,
+            },
+        ])]
+        total = pd.DataFrame([{
+            "asin": "B000000001", "record_id": "rec1", "ads_by": "Owner A",
+            "custom_by": "", "fulfill_by": "FBM",
+        }])
+
+        summary, diagnostics = build_ads_employee_summary_from_reports(reports, total)
+        indexed = summary.set_index("Nhân sự")
+
+        self.assertEqual(indexed.loc["Owner A", "Ads_Spend"], 100)
+        self.assertEqual(indexed.loc["Nhi-Support", "Ads_Spend"], 10)
+        self.assertEqual(diagnostics["support_campaigns"], 1)
+
+    def test_campaign_execution_markers_create_separate_rows(self) -> None:
+        reports = [pd.DataFrame([
+            {
+                "ASIN": "B000000001", "Campaign name": "Owner campaign",
+                "Ads Type": "SP", "ad_spend": 100.0, "ad_sales": 400.0,
+                "ad_orders": 8, "impressions": 1000, "clicks": 100,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "Product-LINHAMZ-B000000001",
+                "Ads Type": "SP", "ad_spend": 10.0, "ad_sales": 20.0,
+                "ad_orders": 1, "impressions": 100, "clicks": 10,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "Product-HIEUAMZ-B000000001",
+                "Ads Type": "SP", "ad_spend": 5.0, "ad_sales": 0.0,
+                "ad_orders": 0, "impressions": 50, "clicks": 5,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "Product-HIEUMRND-B000000001",
+                "Ads Type": "SP", "ad_spend": 6.0, "ad_sales": 12.0,
+                "ad_orders": 1, "impressions": 60, "clicks": 6,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "Product-HAMRND-B000000001",
+                "Ads Type": "SP", "ad_spend": 7.0, "ad_sales": 14.0,
+                "ad_orders": 1, "impressions": 70, "clicks": 7,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "Product-Phrase-B000000001",
+                "Ads Type": "SP", "ad_spend": 2.0, "ad_sales": 8.0,
+                "ad_orders": 1, "impressions": 20, "clicks": 2,
+            },
+            {
+                "ASIN": "B000000001", "Campaign name": "LINH Support-B000000001",
+                "Ads Type": "SP", "ad_spend": 3.0, "ad_sales": 6.0,
+                "ad_orders": 1, "impressions": 30, "clicks": 3,
+            },
+        ])]
+        total = pd.DataFrame([{
+            "asin": "B000000001", "record_id": "rec1", "ads_by": "Owner A",
+            "custom_by": "", "fulfill_by": "FBM",
+        }])
+
+        summary, diagnostics = build_ads_employee_summary_from_reports(reports, total)
+        indexed = summary.set_index("Nhân sự")
+
+        self.assertEqual(indexed.loc["Owner A", "Ads_Spend"], 102)
+        self.assertEqual(indexed.loc["Linh", "Ads_Spend"], 10)
+        self.assertEqual(indexed.loc["Hieu", "Ads_Spend"], 11)
+        self.assertEqual(indexed.loc["Ha", "Ads_Spend"], 7)
+        self.assertEqual(indexed.loc["Nhi-Support", "Ads_Spend"], 3)
+        self.assertAlmostEqual(summary["Ads_Spend"].sum(), 133)
+        self.assertEqual(diagnostics["execution_by_assignee"]["Linh"]["campaigns"], 1)
+
     def test_complete_reports_map_support_fba_and_preserve_type_totals(self) -> None:
         reports = [
             pd.DataFrame([

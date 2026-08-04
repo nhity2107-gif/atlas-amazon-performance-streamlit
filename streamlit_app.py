@@ -29,6 +29,7 @@ from snapshot_store import (
     load_snapshot,
     load_snapshot_metadata,
 )
+from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue
 
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
@@ -141,18 +142,18 @@ STORES = {
 }
 
 ADS = {
-    "Wrappiness": dict(spend=38821.08, sales=105673.29, orders=3212, impressions=3906940, clicks=49380),
-    "Pawsionate": dict(spend=156.19, sales=342.68, orders=8, impressions=25919, clicks=224),
+    "Wrappiness": dict(spend=38821.42, sales=106655.25, orders=3240, impressions=3902108, clicks=49379),
+    "Pawsionate": dict(spend=156.19, sales=342.68, orders=8, impressions=26874, clicks=229),
 }
 
 ADS_BY_TYPE = {
     "Wrappiness": {
-        "SP": dict(spend=35889.12, sales=97594.02, orders=2927, impressions=3458754, clicks=44049),
-        "SB": dict(spend=2931.96, sales=8079.27, orders=285, impressions=448112, clicks=5331),
+        "SP": dict(spend=35889.43, sales=98274.42, orders=2946, impressions=3454164, clicks=44048),
+        "SB": dict(spend=2931.99, sales=8380.83, orders=294, impressions=447870, clicks=5331),
         "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=74, clicks=0),
     },
     "Pawsionate": {
-        "SP": dict(spend=156.19, sales=342.68, orders=8, impressions=25919, clicks=224),
+        "SP": dict(spend=156.19, sales=342.68, orders=8, impressions=26874, clicks=229),
         "SB": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
         "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
     },
@@ -669,10 +670,19 @@ def employee_kpi_tables(
             Portfolio_Records_10_Units=("validated", "sum"),
             Cohort_Records=("in_cohort", "sum"),
             Validated_Records=("cohort_validated", "sum"),
-            Revenue=("Revenue", "sum"),
         )
         .rename(columns={"idea_by": "Nhân sự"})
     )
+    idea_asins = attributed_asins.merge(
+        idea[["record_id", "idea_by"]].drop_duplicates("record_id"),
+        on="record_id",
+        how="left",
+    )
+    idea_revenue = asin_portfolio_revenue(
+        idea_asins,
+        "idea_by",
+    )[["Nhân sự", "Portfolio_Revenue"]].rename(columns={"Portfolio_Revenue": "Revenue"})
+    idea_table = idea_table.merge(idea_revenue, on="Nhân sự", how="outer")
     idea_table = idea_table.merge(
         revenue_milestone_counts(idea, "idea_by"), on="Nhân sự", how="left"
     )
@@ -696,15 +706,12 @@ def employee_kpi_tables(
     product = product[product["managed_by"].fillna("").str.strip().ne("")].copy()
     product["validated"] = product["Units"].ge(10)
     product["cohort_sold"] = product["in_cohort"] & product["validated"]
-    product["new_revenue"] = product["Revenue"].where(product["in_cohort"], 0)
     product_table = (
         product.groupby("managed_by", as_index=False)
         .agg(
             Portfolio_Records_10_Units=("validated", "sum"),
             Cohort_Records=("in_cohort", "sum"),
             Sold_Records=("cohort_sold", "sum"),
-            New_Revenue=("new_revenue", "sum"),
-            Portfolio_Revenue=("Revenue", "sum"),
         )
         .rename(columns={"managed_by": "Nhân sự"})
     )
@@ -740,6 +747,15 @@ def employee_kpi_tables(
     )
     product_table = product_table.merge(product_output, on="Nhân sự", how="left")
     product_table["Qualified_ASINs"] = product_table["Qualified_ASINs"].fillna(0)
+    product_portfolio = asin_portfolio_revenue(attributed_asins, "managed_by")
+    product_new_revenue = asin_new_revenue_from_custom_cohort(
+        attributed_asins,
+        "managed_by",
+        cohort_start,
+        window_end,
+    )
+    product_table = product_table.merge(product_portfolio, on="Nhân sự", how="outer")
+    product_table = product_table.merge(product_new_revenue, on="Nhân sự", how="outer")
 
     support_asins = attributed_asins[
         attributed_asins["custom_by"].fillna("").str.strip().ne("")
@@ -770,23 +786,17 @@ def employee_kpi_tables(
         support_table[column] = support_table[column].fillna(0)
 
     ads = owner_records("ads_by")
-    ads["in_cohort"] = in_lark_calendar_window(
-        ads["testing_start_date"], cohort_start, window_end
-    )
-    ads["new_revenue"] = ads["Revenue"].where(ads["in_cohort"], 0)
     ads["winner"] = ads["Revenue"].ge(5000)
     ads_table = (
         ads.groupby("ads_by", as_index=False)
         .agg(
             New_Winner_Created=("winner", "sum"),
-            Cohort_Records=("in_cohort", "sum"),
-            New_Revenue=("new_revenue", "sum"),
             Portfolio_Revenue=("Revenue", "sum"),
         )
         .rename(columns={"ads_by": "Nhân sự"})
     )
     # Portfolio Revenue follows Ads ownership, except FBA which follows Custom By.
-    # Nhi-Support is an execution-only adjustment and has no owned Order Revenue.
+    # Campaign execution rows have no owned Order Revenue; they arrive only from Ads allocation.
     revenue_asins = attributed_asins.copy()
     revenue_asins = revenue_asins[
         revenue_asins["ads_by"].fillna("").str.strip().ne("")
@@ -817,7 +827,14 @@ def employee_kpi_tables(
         .agg(Allocated_Portfolio_Revenue=("Revenue", "sum"))
         .rename(columns={"Revenue_Owner": "Nhân sự"})
     )
+    ads_new_revenue = asin_new_revenue_from_custom_cohort(
+        revenue_asins,
+        "Revenue_Owner",
+        cohort_start,
+        window_end,
+    )
     ads_table = ads_table.merge(allocated_revenue, on="Nhân sự", how="outer")
+    ads_table = ads_table.merge(ads_new_revenue, on="Nhân sự", how="outer")
     ads_table = ads_table.merge(ads_revenue_milestones, on="Nhân sự", how="outer")
     ads_table["Portfolio_Revenue"] = ads_table["Allocated_Portfolio_Revenue"].combine_first(
         ads_table["Portfolio_Revenue"]
@@ -830,7 +847,7 @@ def employee_kpi_tables(
         ads_table = ads_table.merge(ads_metrics, on="Nhân sự", how="outer")
         for column in (
             "New_Winner_Created",
-            "Cohort_Records",
+            "New_Revenue_ASINs",
             "New_Revenue",
             "Portfolio_Revenue",
             "Ads_Spend",
@@ -882,6 +899,7 @@ def employee_kpi_tables(
             "Cohort_Records",
             "Sold_Records",
             "Sold_Rate",
+            "New_Revenue_ASINs",
             "New_Revenue",
             "Portfolio_Revenue",
             "Listing_Lead_Days",
@@ -898,7 +916,7 @@ def employee_kpi_tables(
             "ACOS",
             "TACOS",
             "Portfolio_Revenue",
-            "Cohort_Records",
+            "New_Revenue_ASINs",
             "New_Revenue",
         ]
     ]
@@ -1263,7 +1281,7 @@ elif page.startswith("03"):
     )
 
 else:
-    st.markdown("## Team KPI · Record-level")
+    st.markdown("## Team KPI · ASIN revenue / Record workflow")
     st.caption(
         "Record ID, ASIN và workflow dùng ngày lịch gốc của Lark, không đổi timezone. "
         "Orders, Units và Revenue dùng Purchase Time của Order Report đã đổi sang "
@@ -1513,24 +1531,79 @@ else:
                         "Revenue ≥ $5,000 / Record ID",
                     )
 
+                    new_asin_mask = in_lark_calendar_window(
+                        attribution["attributed_asins"]["custom_check_done_date"],
+                        validation_cohort_start(window_end),
+                        window_end,
+                    )
+                    product_new_asins = attribution["attributed_asins"].loc[
+                        new_asin_mask
+                        & attribution["attributed_asins"]["managed_by"]
+                        .fillna("")
+                        .str.strip()
+                        .ne(""),
+                        "asin",
+                    ].nunique()
+                    ads_new_asins = attribution["attributed_asins"].loc[
+                        new_asin_mask
+                        & attribution["attributed_asins"]["ads_by"]
+                        .fillna("")
+                        .str.strip()
+                        .ne(""),
+                        "asin",
+                    ].nunique()
+                    ownership_cols = st.columns(2)
+                    cohort_label = (
+                        f"Custom Check Done {validation_cohort_start(window_end):%d/%m}–"
+                        f"{window_end:%d/%m}"
+                    )
+                    ownership_cols[0].metric(
+                        "Product New ASINs",
+                        f"{product_new_asins:,}",
+                        cohort_label,
+                    )
+                    ownership_cols[1].metric(
+                        "Ads New ASINs",
+                        f"{ads_new_asins:,}",
+                        cohort_label,
+                    )
+
                     st.markdown("### KPI theo nhân sự · Lark calendar + Purchase Month LA")
                     st.caption(
                         "Idea theo MRND IDEA Pickup Date; Product output và Product Support theo "
-                        "Custom Check Done Date; cohort Sold/Validated/New Revenue từ ngày 20 tháng "
-                        "trước đến cuối time window."
+                        "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, còn "
+                        "Product/Ads New Revenue theo từng ASIN có Custom Check Done từ ngày 20 "
+                        "tháng trước đến cuối time window."
                     )
                     if ads_snapshot_matches:
                         diagnostics = [item.get("diagnostics", {}) for item in ads_imports]
                         support_asins = sum(int(item.get("support_asins", 0)) for item in diagnostics)
                         support_spend = sum(float(item.get("support_spend", 0)) for item in diagnostics)
                         support_sales = sum(float(item.get("support_sales", 0)) for item in diagnostics)
+                        execution_totals: dict[str, float] = {}
+                        for item in diagnostics:
+                            for assignee, metrics in item.get("execution_by_assignee", {}).items():
+                                execution_totals[assignee] = execution_totals.get(assignee, 0) + float(
+                                    metrics.get("spend", 0)
+                                )
+                        execution_summary = ", ".join(
+                            f"{assignee} ${spend:,.2f}"
+                            for assignee, spend in execution_totals.items()
+                            if spend > 0
+                        )
+                        execution_clause = (
+                            f"tách campaign thực thi {execution_summary}; "
+                            if execution_summary
+                            else ""
+                        )
                         fba_asins = sum(int(item.get("fba_asins", 0)) for item in diagnostics)
                         imported_stores = ", ".join(item.get("store", "") for item in ads_imports)
                         st.success(
                             "Ads snapshot đã map 100% SP/SB/SD ASIN → TOTAL ASIN → "
                             f"Ads By cho {imported_stores}. Đã chuyển {support_asins} ASIN / "
                             f"${support_spend:,.2f} Spend / ${support_sales:,.2f} Sales sang "
-                            f"Nhi-Support và tách {fba_asins} ASIN FBA sang Nhi-FBA/Linh-FBA."
+                            f"Nhi-Support; {execution_clause}và tách "
+                            f"{fba_asins} ASIN FBA sang Nhi-FBA/Linh-FBA."
                         )
                         catalog_fba_asins = set(
                             attribution["total"].loc[
@@ -1565,10 +1638,10 @@ else:
                     with st.expander("Quy định KPI đang áp dụng", expanded=False):
                         st.markdown(
                             """
-- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units ≥10. Cột Portfolio ≥10 là số Record ID đạt ngưỡng trong toàn bộ ownership.
-- **Product:** Qualified ASINs là unique ASIN theo Custom Check Done Date; `Listing Cohort` là unique Record ID có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units ≥10; cột Portfolio ≥10 là toàn bộ ownership.
+- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN thuộc Idea ownership.
+- **Product:** Qualified ASINs là unique ASIN theo Custom Check Done Date; `Listing Cohort` là unique Record ID có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN thuộc Managed By; `New Revenue` chỉ gồm các ASIN có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
-- **Ads:** Winner là Record ID có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD; SP dùng Advertised ASIN, SB/SD dùng ASIN đầu tiên trong Campaign Name để map ownership mà không nhân đôi campaign total. Campaign Nhi-Support được chuyển sang hàng riêng và không nhận Portfolio Revenue/TACOS. FBA lấy theo `Fulfill By = FBA`, sau đó phân bổ `Nhi-FBA`/`Linh-FBA` theo `Custom By`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
+- **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD; SP dùng Advertised ASIN, SB/SD dùng ASIN đầu tiên trong Campaign Name để map ownership mà không nhân đôi campaign total. Mọi campaign có chữ `Support` được chuyển sang `Nhi-Support`; marker có `LINH`, `HIEU`, `HA` (kể cả `LINHAMZ`, `HIEUAMZ`, `HIEUMRND`, `HAMRND`) được chuyển sang các hàng thực thi `Linh`, `Hieu`, `Ha`. Các hàng thực thi không nhận Portfolio Revenue/TACOS. FBA lấy theo `Fulfill By = FBA`, sau đó phân bổ `Nhi-FBA`/`Linh-FBA` theo `Custom By`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
 - **Revenue milestones:** các cột `Record IDs ≥$1K/≥$3K/≥$5K/≥$10K/≥$15K/≥$20K` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có Revenue trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
                             """
                         )
@@ -1590,11 +1663,12 @@ else:
                                         if title.startswith("Idea")
                                         else f"Listing_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
                                         if title.startswith("Product ·")
-                                        else f"Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                        else f"Custom_Check_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
                                     ),
                                     "Validated_Records": "Validated_Records (≥10 Units)",
                                     "Sold_Records": "Sold_Records (≥10 Units)",
                                     "Qualified_ASINs": "Qualified_ASINs (unique)",
+                                    "New_Revenue_ASINs": f"New_Revenue_ASINs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})",
                                 }
                             )
                             integer_columns = [
