@@ -5,17 +5,48 @@ import unittest
 from pathlib import Path
 
 import pandas as pd
+from cryptography.fernet import Fernet
 
 from ads_data import (
     build_ads_employee_summary,
     build_ads_employee_summary_from_reports,
     load_ads_snapshot,
+    load_encrypted_ads_snapshot,
     save_ads_snapshot,
+    save_encrypted_ads_snapshot,
     select_ads_summary,
 )
 
 
 class AdsDataTests(unittest.TestCase):
+    def test_encrypted_ads_snapshot_round_trip_and_wrong_key_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "ads"
+            encrypted = root / "published.enc"
+            summary = pd.DataFrame(
+                [{
+                    "Nhân sự": "Owner A", "ASINs": 2, "Ads_Spend": 10.0,
+                    "Ads_Sales": 25.0, "Ads_Orders": 3, "ACOS": 0.4,
+                }]
+            )
+            save_ads_snapshot(
+                source,
+                summary,
+                {"month": "2026-08", "store": "Wrappiness", "period_end": "2026-08-04"},
+            )
+            key = Fernet.generate_key().decode("utf-8")
+
+            save_encrypted_ads_snapshot(source, encrypted, key)
+            restored = load_encrypted_ads_snapshot(encrypted, key)
+
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            self.assertEqual(restored["imports"][0]["period_end"], "2026-08-04")
+            self.assertEqual(restored["summary"].iloc[0]["Nhân sự"], "Owner A")
+            wrong_key = Fernet.generate_key().decode("utf-8")
+            self.assertIsNone(load_encrypted_ads_snapshot(encrypted, wrong_key))
+
     def test_any_campaign_containing_support_maps_to_nhi_support(self) -> None:
         reports = [pd.DataFrame([
             {

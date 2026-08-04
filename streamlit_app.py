@@ -8,7 +8,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from ads_data import load_ads_snapshot, normalize_person, select_ads_summary
+from ads_data import (
+    load_ads_snapshot,
+    load_encrypted_ads_snapshot,
+    normalize_person,
+    select_ads_summary,
+)
 from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
 from lark_snapshot_store import (
@@ -35,6 +40,9 @@ from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
 PERSISTED_LARK_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "lark"
 PERSISTED_ADS_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "ads"
+PUBLISHED_ADS_SNAPSHOT_PATH = (
+    Path(__file__).with_name("snapshot") / "published_ads_snapshot.enc"
+)
 
 
 st.set_page_config(
@@ -141,24 +149,6 @@ STORES = {
     ),
 }
 
-ADS = {
-    "Wrappiness": dict(spend=38821.42, sales=106655.25, orders=3240, impressions=3902108, clicks=49379),
-    "Pawsionate": dict(spend=156.19, sales=342.68, orders=8, impressions=26874, clicks=229),
-}
-
-ADS_BY_TYPE = {
-    "Wrappiness": {
-        "SP": dict(spend=35889.43, sales=98274.42, orders=2946, impressions=3454164, clicks=44048),
-        "SB": dict(spend=2931.99, sales=8380.83, orders=294, impressions=447870, clicks=5331),
-        "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=74, clicks=0),
-    },
-    "Pawsionate": {
-        "SP": dict(spend=156.19, sales=342.68, orders=8, impressions=26874, clicks=229),
-        "SB": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
-        "SD": dict(spend=0.0, sales=0.0, orders=0, impressions=0, clicks=0),
-    },
-}
-
 EMPLOYEES = {
     "Idea By": [("Gary / Minh Hiếu / MRnD", 120)],
     "Listing By": [
@@ -210,32 +200,9 @@ def donut_chart(frame: pd.DataFrame, names: str, values: str, colors: list[str],
     return figure
 
 
-def ads_type_frame(store_name: str) -> pd.DataFrame:
-    stores = list(ADS_BY_TYPE) if store_name == "All Stores" else [store_name]
-    rows = []
-    for ads_type in ("SP", "SB", "SD"):
-        row = {
-            metric: sum(ADS_BY_TYPE[name][ads_type][metric] for name in stores)
-            for metric in ("spend", "sales", "orders", "impressions", "clicks")
-        }
-        row["Ads Type"] = ads_type
-        rows.append(row)
-    frame = pd.DataFrame(rows)
-    total_spend = float(frame["spend"].sum())
-    total_sales = float(frame["sales"].sum())
-    frame["Spend Share"] = frame["spend"].div(total_spend if total_spend else 1)
-    frame["Sales Share"] = frame["sales"].div(total_sales if total_sales else 1)
-    frame["ACOS"] = frame["spend"].div(frame["sales"].where(frame["sales"].ne(0)))
-    frame["ROAS"] = frame["sales"].div(frame["spend"].where(frame["spend"].ne(0)))
-    frame["CPC"] = frame["spend"].div(frame["clicks"].where(frame["clicks"].ne(0)))
-    frame["CVR"] = frame["orders"].div(frame["clicks"].where(frame["clicks"].ne(0)))
-    frame["CTR"] = frame["clicks"].div(frame["impressions"].where(frame["impressions"].ne(0)))
-    return frame
-
-
-def daily_frame(store_name: str) -> pd.DataFrame:
+def daily_frame(store_name: str, month: str | None = None) -> pd.DataFrame:
     stores = list(STORES) if store_name == "All Stores" else [store_name]
-    performance = selected_order_performance(stores)
+    performance = selected_order_performance(stores, month)
     if performance.empty:
         return pd.DataFrame(columns=["Revenue", "Orders"])
     performance = performance.copy()
@@ -248,7 +215,7 @@ def daily_frame(store_name: str) -> pd.DataFrame:
     )
 
 
-def active_store(store_name: str) -> dict:
+def active_store(store_name: str, month: str | None = None) -> dict:
     fallback = STORES[store_name] if store_name != "All Stores" else {
         key: sum(STORES[name][key] for name in STORES)
         for key in [
@@ -257,7 +224,7 @@ def active_store(store_name: str) -> dict:
         ]
     } | {"products": WR_PRODUCTS}
     stores = list(STORES) if store_name == "All Stores" else [store_name]
-    performance = selected_order_performance(stores)
+    performance = selected_order_performance(stores, month)
     if performance.empty:
         return fallback | {"snapshot_rows": 0, "snapshot_backed": False}
     return fallback | {
@@ -285,6 +252,7 @@ def persisted_order_performance(
 
 def selected_order_performance(
     stores: list[str],
+    month: str | None = None,
 ) -> pd.DataFrame:
     snapshot_version = (
         PERSISTED_SNAPSHOT_PATH.stat().st_mtime_ns
@@ -292,7 +260,68 @@ def selected_order_performance(
         else 0
     )
     persisted = persisted_order_performance(snapshot_version, 2)
-    return persisted[persisted["Store"].isin(stores)].copy()
+    selected = persisted[persisted["Store"].isin(stores)].copy()
+    if month and not selected.empty:
+        dates = pd.to_datetime(selected["Date"], errors="coerce")
+        selected = selected[dates.dt.strftime("%Y-%m").eq(month)].copy()
+    return selected
+
+
+def available_order_months() -> list[str]:
+    persisted = selected_order_performance(list(STORES))
+    if persisted.empty:
+        return [REPORT_START.strftime("%Y-%m")]
+    dates = pd.to_datetime(persisted["Date"], errors="coerce")
+    months = sorted(dates.dt.strftime("%Y-%m").dropna().unique(), reverse=True)
+    return months or [REPORT_START.strftime("%Y-%m")]
+
+
+def live_ads_performance(
+    month: str,
+    store_name: str,
+) -> tuple[dict[str, float], pd.DataFrame, list[dict]]:
+    snapshot = current_ads_snapshot()
+    summary, imports = select_ads_summary(snapshot, month, store_name)
+    by_type = {
+        kind: {metric: 0.0 for metric in ("spend", "sales", "orders", "impressions", "clicks")}
+        for kind in ("SP", "SB", "SD")
+    }
+    for item in imports:
+        for kind, metrics in item.get("diagnostics", {}).get("by_type", {}).items():
+            if kind not in by_type:
+                continue
+            for metric in by_type[kind]:
+                by_type[kind][metric] += float(metrics.get(metric, 0))
+    frame = pd.DataFrame(
+        [{"Ads Type": kind, **metrics} for kind, metrics in by_type.items()]
+    )
+    total_spend = float(frame["spend"].sum())
+    total_sales = float(frame["sales"].sum())
+    frame["Spend Share"] = frame["spend"].div(total_spend if total_spend else 1)
+    frame["Sales Share"] = frame["sales"].div(total_sales if total_sales else 1)
+    frame["ACOS"] = frame["spend"].div(frame["sales"].where(frame["sales"].ne(0)))
+    frame["ROAS"] = frame["sales"].div(frame["spend"].where(frame["spend"].ne(0)))
+    frame["CPC"] = frame["spend"].div(frame["clicks"].where(frame["clicks"].ne(0)))
+    frame["CVR"] = frame["orders"].div(frame["clicks"].where(frame["clicks"].ne(0)))
+    frame["CTR"] = frame["clicks"].div(frame["impressions"].where(frame["impressions"].ne(0)))
+    totals = {
+        "spend": float(summary["Ads_Spend"].sum()) if not summary.empty else 0.0,
+        "sales": float(summary["Ads_Sales"].sum()) if not summary.empty else 0.0,
+        "orders": float(summary["Ads_Orders"].sum()) if not summary.empty else 0.0,
+        "impressions": float(frame["impressions"].sum()),
+        "clicks": float(frame["clicks"].sum()),
+    }
+    return totals, frame, imports
+
+
+def current_ads_snapshot() -> dict | None:
+    local = load_ads_snapshot(PERSISTED_ADS_SNAPSHOT_DIR)
+    if local is not None:
+        return local
+    return load_encrypted_ads_snapshot(
+        PUBLISHED_ADS_SNAPSHOT_PATH,
+        secret_value("PUBLISHED_SNAPSHOT_KEY"),
+    )
 
 
 def secret_value(name: str) -> str:
@@ -966,15 +995,22 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.divider()
-    st.markdown("**July demo**")
-    st.caption("Order Report đã xử lý")
+    month_options = available_order_months()
+    selected_month = st.selectbox(
+        "Tháng báo cáo",
+        month_options,
+        format_func=lambda value: pd.Timestamp(f"{value}-01").strftime("Tháng %m/%Y"),
+    )
+    st.markdown("**Live month-to-date**")
+    st.caption("Order + Ads snapshot đã xử lý")
     st.caption("Pacific Time · Cancelled excluded\n\nFBA / FBM separated")
 
 
 top_left, top_right = st.columns([2, 1])
 with top_left:
     st.markdown('<div class="atlas-eyebrow">PERFORMANCE SNAPSHOT</div>', unsafe_allow_html=True)
-    st.markdown('<div class="atlas-title">Tháng 07/2026</div>', unsafe_allow_html=True)
+    report_month_label = pd.Timestamp(f"{selected_month}-01").strftime("Tháng %m/%Y")
+    st.markdown(f'<div class="atlas-title">{report_month_label}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="atlas-subtitle">Order Report thực tế · Purchase Time theo America/Los_Angeles</div>',
         unsafe_allow_html=True,
@@ -982,7 +1018,15 @@ with top_left:
 with top_right:
     store = st.selectbox("Store", ["All Stores", "Pawsionate", "Wrappiness"])
 
-data = active_store(store)
+data = active_store(store, selected_month)
+selected_order_rows = selected_order_performance(
+    list(STORES) if store == "All Stores" else [store],
+    selected_month,
+)
+if not selected_order_rows.empty:
+    live_through = pd.to_datetime(selected_order_rows["Date"], errors="coerce").max()
+    if pd.notna(live_through):
+        st.caption(f"Order snapshot đang cập nhật đến hết ngày {live_through:%d/%m/%Y}.")
 if data["snapshot_backed"]:
     notice_text = (
         f'{data["snapshot_rows"]:,} dòng tổng hợp theo ngày/ASIN · Cancelled đã loại tại pipeline · '
@@ -1007,7 +1051,7 @@ if page.startswith("01"):
     cols[3].metric("Active ASINs", f'{data["asins"]:,}', "Có doanh thu USD")
 
     overview_stores = list(STORES) if store == "All Stores" else [store]
-    overview_performance = selected_order_performance(overview_stores)
+    overview_performance = selected_order_performance(overview_stores, selected_month)
     overview_lark = persisted_lark_frames(
         lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
         LARK_SNAPSHOT_SCHEMA_VERSION,
@@ -1045,7 +1089,7 @@ if page.startswith("01"):
     left, right = st.columns([2, 1])
     with left:
         st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">DAILY REVENUE</div><h3>Revenue theo ngày</h3>', unsafe_allow_html=True)
-        st.bar_chart(daily_frame(store)["Revenue"], color="#ff7b2c", height=310)
+        st.bar_chart(daily_frame(store, selected_month)["Revenue"], color="#ff7b2c", height=310)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         store_share = (
@@ -1114,7 +1158,7 @@ elif page.startswith("02"):
     required_product_stores = (
         ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
     )
-    product_performance = selected_order_performance(required_product_stores)
+    product_performance = selected_order_performance(required_product_stores, selected_month)
     if not product_performance.empty:
         if missing_secrets:
             st.warning(
@@ -1167,7 +1211,7 @@ elif page.startswith("02"):
                     st.download_button(
                         "Tải CSV ASIN chưa map",
                         unmapped.to_csv(index=False).encode("utf-8-sig"),
-                        "unmapped_asins_july_2026.csv",
+                        f"unmapped_asins_{selected_month}.csv",
                         "text/csv",
                     )
             else:
@@ -1187,15 +1231,43 @@ elif page.startswith("02"):
         )
 
 elif page.startswith("03"):
-    if store == "All Stores":
-        ads = {key: sum(ADS[name][key] for name in ADS) for key in ADS["Wrappiness"]}
+    ads, type_performance, live_ads_imports = live_ads_performance(selected_month, store)
+    if not live_ads_imports:
+        st.warning(
+            "Chưa có Ads snapshot month-to-date khớp tháng/store đang chọn. "
+            "Hãy chạy scripts/update_month_to_date.ps1 với Ads report mới nhất."
+        )
     else:
-        ads = ADS[store]
+        ads_period_ends = [item.get("period_end", "") for item in live_ads_imports]
+        ads_period_ends = [value for value in ads_period_ends if value]
+        if ads_period_ends:
+            st.caption(
+                "Ads snapshot đang cập nhật đến hết ngày "
+                + pd.Timestamp(max(ads_period_ends)).strftime("%d/%m/%Y")
+                + "."
+            )
+    tacos = ads["spend"] / data["revenue"] if data["revenue"] else pd.NA
+    acos = ads["spend"] / ads["sales"] if ads["sales"] else pd.NA
+    roas = ads["sales"] / ads["spend"] if ads["spend"] else pd.NA
+    cvr = ads["orders"] / ads["clicks"] if ads["clicks"] else pd.NA
     cols = st.columns(4)
-    cols[0].metric("Ad spend", money(ads["spend"]), f'{ads["spend"] / data["revenue"] * 100:.1f}% TACOS')
-    cols[1].metric("Ad sales", money(ads["sales"]), f'{ads["sales"] / data["revenue"] * 100:.1f}% total revenue')
-    cols[2].metric("ACOS", f'{ads["spend"] / ads["sales"] * 100:.1f}%', f'ROAS {ads["sales"] / ads["spend"]:.2f}')
-    cols[3].metric("Ad orders", f'{ads["orders"]:,}', f'{ads["orders"] / ads["clicks"] * 100:.1f}% CVR')
+    cols[0].metric(
+        "Ad spend", money(ads["spend"]),
+        f"{tacos:.1%} TACOS" if pd.notna(tacos) else "TACOS N/A",
+    )
+    sales_share = ads["sales"] / data["revenue"] if data["revenue"] else pd.NA
+    cols[1].metric(
+        "Ad sales", money(ads["sales"]),
+        f"{sales_share:.1%} total revenue" if pd.notna(sales_share) else "N/A",
+    )
+    cols[2].metric(
+        "ACOS", f"{acos:.1%}" if pd.notna(acos) else "N/A",
+        f"ROAS {roas:.2f}" if pd.notna(roas) else "ROAS N/A",
+    )
+    cols[3].metric(
+        "Ad orders", f'{int(ads["orders"]):,}',
+        f"{cvr:.1%} CVR" if pd.notna(cvr) else "CVR N/A",
+    )
     funnel = pd.DataFrame(
         {"Stage": ["Impressions", "Clicks", "PPC Orders"], "Volume": [ads["impressions"], ads["clicks"], ads["orders"]]}
     )
@@ -1217,15 +1289,16 @@ elif page.startswith("03"):
         plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(funnel_figure, width="stretch", config={"displayModeBar": False})
+    ctr = ads["clicks"] / ads["impressions"] if ads["impressions"] else pd.NA
+    cpc = ads["spend"] / ads["clicks"] if ads["clicks"] else pd.NA
     st.caption(
-        f'CTR {ads["clicks"] / ads["impressions"] * 100:.2f}% · '
-        f'CVR {ads["orders"] / ads["clicks"] * 100:.2f}% · '
-        f'CPC ${ads["spend"] / ads["clicks"]:.2f}'
+        (f"CTR {ctr:.2%} · " if pd.notna(ctr) else "CTR N/A · ")
+        + (f"CVR {cvr:.2%} · " if pd.notna(cvr) else "CVR N/A · ")
+        + (f"CPC ${cpc:.2f}" if pd.notna(cpc) else "CPC N/A")
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">CAMPAIGN TYPE PERFORMANCE</div><h3>Hiệu quả theo Ads Type · SP / SB / SD</h3></div>', unsafe_allow_html=True)
-    type_performance = ads_type_frame(store)
     total_row = pd.DataFrame(
         [
             {
@@ -1300,7 +1373,7 @@ else:
             selected_stores = (
                 ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
             )
-            performance = selected_order_performance(selected_stores)
+            performance = selected_order_performance(selected_stores, selected_month)
             if performance.empty:
                 st.error(
                     "Chưa đồng bộ dữ liệu Order. Hãy chạy pipeline cập nhật "
@@ -1309,7 +1382,7 @@ else:
                 st.stop()
             if "Date" not in performance.columns:
                 persisted_order_performance.clear()
-                performance = selected_order_performance(selected_stores)
+                performance = selected_order_performance(selected_stores, selected_month)
             if "Date" not in performance.columns:
                 # Streamlit may retain the previously imported snapshot_store module
                 # after a hot reload. Read the persisted CSV once to refresh its schema.
@@ -1319,6 +1392,11 @@ else:
                 )
                 performance = fresh_snapshot[
                     fresh_snapshot["Store"].isin(selected_stores)
+                ].copy()
+                performance = performance[
+                    pd.to_datetime(performance["Date"], errors="coerce")
+                    .dt.strftime("%Y-%m")
+                    .eq(selected_month)
                 ].copy()
             if "Date" not in performance.columns:
                 # A legacy single-month snapshot can still be used for its report month.
@@ -1332,27 +1410,10 @@ else:
             if available_dates.empty:
                 st.error("Snapshot Order chưa có Purchase Date hợp lệ để lọc KPI theo tháng.")
                 st.stop()
-            performance["Purchase Month"] = performance["Date"].dt.strftime("%Y-%m")
-            available_months = sorted(performance["Purchase Month"].dropna().unique(), reverse=True)
-            selected_month = st.selectbox(
-                "Purchase month",
-                options=available_months,
-                format_func=lambda value: pd.Timestamp(f"{value}-01").strftime("Tháng %m/%Y"),
-                help="Revenue được lọc theo tháng của Purchase Date trong Order Report.",
-            )
-            performance = performance[performance["Purchase Month"].eq(selected_month)].copy()
-            if performance.empty:
-                st.warning("Không có Order hợp lệ trong tháng đã chọn.")
-                st.stop()
             report_start = performance["Date"].min().normalize()
             report_end = performance["Date"].max().normalize()
             window_start = pd.Timestamp(f"{selected_month}-01")
-            window_end = (
-                window_start
-                + pd.offsets.MonthEnd(1)
-                + pd.Timedelta(days=1)
-                - pd.Timedelta(seconds=1)
-            )
+            window_end = report_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
             st.success(
                 f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
                 f"Purchase Date Los Angeles hiện có {report_start:%d/%m/%Y}–"
@@ -1400,7 +1461,7 @@ else:
                         "Purchase Time đã chuẩn hóa America/Los_Angeles"
                     )
                 attribution = prepare_attribution(lark, store, performance)
-                ads_snapshot = load_ads_snapshot(PERSISTED_ADS_SNAPSHOT_DIR)
+                ads_snapshot = current_ads_snapshot()
                 ads_summary, ads_imports = select_ads_summary(
                     ads_snapshot, selected_month, store
                 )

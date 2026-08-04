@@ -20,7 +20,7 @@ Use lowercase ASCII store slugs and separate filename components with `__`.
 The reporting month is the month represented by the data, not the export date.
 
 ```text
-YYYY-MM__<store>__order__monthly.txt
+YYYY-MM__<store>__order__mtd.txt
 YYYY-MM__<store>__ads__sp-advertised-product.xlsx
 YYYY-MM__<store>__ads__sb-campaign.xlsx
 YYYY-MM__<store>__ads__sd-campaign.xlsx
@@ -36,11 +36,11 @@ treated as final.
 Examples for July 2026:
 
 ```text
-2026-07__wrappiness__order__monthly.txt
+2026-07__wrappiness__order__mtd.txt
 2026-07__wrappiness__ads__sp-advertised-product.xlsx
 2026-07__wrappiness__ads__sb-campaign.xlsx
 2026-07__wrappiness__ads__sd-campaign.xlsx
-2026-07__pawsionate__order__monthly.txt
+2026-07__pawsionate__order__mtd.txt
 2026-07__pawsionate__ads__sp-advertised-product.xlsx
 ```
 
@@ -51,10 +51,10 @@ For Pawsionate, an SP-only workbook import is valid when SB and SD are declared
 
 | Dataset | Required granularity | Date handling | Primary mapping |
 |---|---|---|---|
-| Order monthly | Amazon order item | Purchase Time converted to `America/Los_Angeles` | ASIN, then SKU Record ID hint |
-| SP advertised product | Campaign + Advertised ASIN | Amazon report month | `Advertised ASIN` |
-| SB campaign | Campaign | Amazon report month | First ASIN in `Campaign Name` |
-| SD campaign | Campaign | Amazon report month | First ASIN in `Campaign Name` |
+| Order MTD | Amazon order item, day 01 through input date | Purchase Time converted to `America/Los_Angeles` | ASIN, then SKU Record ID hint |
+| SP advertised product | Campaign + Advertised ASIN, day 01 through input date | Amazon report month-to-date | `Advertised ASIN` |
+| SB campaign | Campaign, day 01 through input date | Amazon report month-to-date | First ASIN in `Campaign Name` |
+| SD campaign | Campaign, day 01 through input date | Amazon report month-to-date | First ASIN in `Campaign Name` |
 | Lark | API snapshot, not a raw file in this folder | Original Lark calendar date | TOTAL ASIN / MRND IDEA / CLIPARTS |
 
 Every non-zero Ads row must resolve to an ASIN and then to `TOTAL ASIN`. Every

@@ -1,6 +1,54 @@
 # Atlas Amazon Performance Dashboard
 
-Streamlit dashboard for July 2026 Amazon order, Ads and employee KPI reporting.
+Streamlit dashboard for live month-to-date Amazon order, Ads and employee KPI reporting.
+
+## Daily month-to-date update
+
+Each daily Amazon export must cover the first day of the selected month through
+the input date. Run one command after downloading the reports:
+
+```powershell
+& "D:\Atlas Amazon Performance\dashboard\scripts\update_month_to_date.ps1" `
+  -Month 2026-08 `
+  -AsOfDate 2026-08-04 `
+  -WrappinessOrder "D:\reports\wrappiness-orders.txt" `
+  -PawsionateOrder "D:\reports\pawsionate-orders.txt" `
+  -WrappinessSP "D:\reports\wrappiness-sp.xlsx" `
+  -WrappinessSB "D:\reports\wrappiness-sb.xlsx" `
+  -WrappinessSD "D:\reports\wrappiness-sd.xlsx" `
+  -PawsionateSP "D:\reports\pawsionate-sp.xlsx"
+```
+
+The `mtd` import deletes the existing Store interval from day 01 through
+`AsOfDate` before inserting the new Order report. This handles late orders,
+cancellations and omitted rows without double counting. Ads imports replace the
+same Store + Month snapshot. The dashboard reads the saved snapshots, exposes a
+global month selector and displays the latest covered Order/Ads date.
+
+Add `-PublishOrderSnapshot` only when the aggregate Order snapshot should be
+committed and pushed. Raw Order files, the SQLite database and Ads/Lark snapshots
+remain local and gitignored.
+
+### Local graphical update tool
+
+Run the PC-only uploader on `http://127.0.0.1:8502`:
+
+```powershell
+& "D:\Atlas Amazon Performance\dashboard\scripts\run_update_tool.ps1"
+```
+
+The tool accepts all six MTD files, validates Order date coverage and Ads/Lark
+mapping, updates the local snapshots, runs tests, then publishes only the
+aggregate Order snapshot plus an encrypted Ads snapshot. Because the GitHub
+repository is public, initialize a Fernet key once:
+
+```powershell
+python scripts/setup_publish_key.py
+```
+
+Open `D:\\Atlas Amazon Performance\\STREAMLIT-CLOUD-SECRET.txt`, then copy its
+`PUBLISHED_SNAPSHOT_KEY` line into Streamlit Cloud App settings
+→ Secrets. Never commit the plaintext key or `snapshot/ads/`.
 
 ## Standard local input database
 
@@ -87,7 +135,7 @@ python scripts/import_ads_reports.py \
 Pawsionate accepts a complete SP workbook without SB/SD because those two Ads
 types are declared `not-applicable` for this store and month.
 
-Example update:
+Legacy interval update:
 
 ```powershell
 & "D:\Atlas Amazon Performance\update_dashboard.ps1" `
@@ -104,6 +152,16 @@ store's complete Pacific-date interval (`-Start` through `-End`) before insertin
 the new report, ensuring new late orders are added and cancelled or omitted
 orders are removed. The pipeline rejects a report containing orders outside that
 replacement window to prevent an accidental partial refresh.
+
+For the standard daily full-month export, use scope `mtd` with an explicit
+`--as-of-date`; the first replacement date is derived automatically as day 01:
+
+```powershell
+python scripts/local_data_pipeline.py ingest-order `
+  --db "D:\Atlas Amazon Performance\database\atlas.db" `
+  --file "D:\reports\wrappiness-orders.txt" `
+  --store Wrappiness --scope mtd --as-of-date 2026-08-04
+```
 
 When invoking the Python pipeline directly, pass the interval explicitly:
 

@@ -35,6 +35,9 @@ def expected_paths(root: Path, month: str, store: str) -> dict[str, tuple[Path, 
     store_root = root / month / store
     return {
         "order": (
+            store_root / "orders" / f"{month}__{store}__order__mtd.txt",
+            store_root / "orders" / f"{month}__{store}__order__mtd.tsv",
+            store_root / "orders" / f"{month}__{store}__order__mtd.csv",
             store_root / "orders" / f"{month}__{store}__order__monthly.txt",
             store_root / "orders" / f"{month}__{store}__order__monthly.tsv",
             store_root / "orders" / f"{month}__{store}__order__monthly.csv",

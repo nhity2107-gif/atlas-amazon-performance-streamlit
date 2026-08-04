@@ -43,6 +43,9 @@ phải cập nhật cả code, test và tài liệu này.
 - Daily import upsert theo `order-item-id`.
 - Weekly/monthly import thay thế toàn bộ store + khoảng ngày Los Angeles được
   chỉ định trước khi insert report mới.
+- Daily live chuẩn dùng scope `mtd`: report chứa ngày 01 của tháng đến ngày
+  input; pipeline tự thay thế đúng khoảng này để phản ánh late order, cancelled
+  và không cộng trùng.
 - Pipeline từ chối report có order nằm ngoài replacement window.
 - Tổng quan, Sản phẩm và Team KPI phải dùng chung
   `snapshot/dashboard_snapshot.csv`; không dùng số demo hard-code cho Revenue.
@@ -196,7 +199,7 @@ của dòng ASIN sau khi lọc ngày.
 - Store slug chỉ dùng `wrappiness` hoặc `pawsionate`.
 - Tên file dùng `YYYY-MM__<store>__<dataset>__<scope>.<ext>`; tháng là kỳ dữ
   liệu, không phải ngày download.
-- Order chuẩn: `YYYY-MM__<store>__order__monthly.txt`.
+- Order live chuẩn: `YYYY-MM__<store>__order__mtd.txt`.
 - Ads chuẩn: `sp-advertised-product`, `sb-campaign`, `sd-campaign`.
 - Raw input và `manifest.csv` từng tháng chỉ lưu local, bị gitignore. Manifest
   ghi trạng thái, dung lượng và SHA-256 để phát hiện việc thay file nguồn.
@@ -208,6 +211,8 @@ của dòng ASIN sau khi lọc ngày.
 
 - Dashboard luôn đọc snapshot tổng hợp gần nhất.
 - Snapshot được tạo lại sau khi pipeline ingest report mới.
+- Snapshot xuất từ toàn bộ SQLite database để giữ lịch sử nhiều tháng; toàn bộ
+  dashboard dùng chung bộ chọn tháng ở sidebar.
 - Metadata ghi rõ source report update và timezone Los Angeles.
 
 ### Lark snapshot
@@ -234,6 +239,12 @@ của dòng ASIN sau khi lọc ngày.
   và không nhân campaign total theo số ASIN.
 - Dashboard chỉ dùng snapshot khi month/store khớp lựa chọn hiện tại. All Stores
   cộng các store đã import rồi tính lại ACOS từ tổng Spend/Sales.
+- Import Ads hằng ngày là month-to-date và thay thế toàn bộ cùng Store + Month;
+  metadata lưu `period_start`, `period_end` để dashboard hiển thị ngày cập nhật.
+- Local Update Tool chạy riêng trên `127.0.0.1:8502`, nhận đủ 2 Order + 4 Ads
+  report, sinh snapshot và có nút publish. Vì GitHub public, chỉ
+  `snapshot/published_ads_snapshot.enc` đã mã hóa Fernet được phép push;
+  Streamlit giải mã bằng `PUBLISHED_SNAPSHOT_KEY` trong Secrets.
 
 ## 9. Bảo mật và repository
 

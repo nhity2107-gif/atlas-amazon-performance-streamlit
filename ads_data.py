@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from io import StringIO
 import json
 from pathlib import Path
 import re
@@ -8,6 +9,7 @@ from typing import Any
 import unicodedata
 
 import pandas as pd
+from cryptography.fernet import Fernet, InvalidToken
 
 from fulfillment_rules import apply_fulfillment_overrides
 
@@ -42,6 +44,7 @@ STANDARD_REPORT_COLUMNS = [
 ]
 SNAPSHOT_DIMENSIONS = ["Month", "Store"]
 SCHEMA_VERSION = "ads-snapshot-v2"
+ENCRYPTED_SCHEMA_VERSION = "encrypted-ads-snapshot-v1"
 
 
 class AdsDataError(RuntimeError):
@@ -579,6 +582,57 @@ def load_ads_snapshot(root: Path) -> dict[str, Any] | None:
     if metadata.get("schema_version") != SCHEMA_VERSION:
         return None
     summary = pd.read_csv(summary_path, keep_default_na=False)
+    required = set(SNAPSHOT_DIMENSIONS + SUMMARY_COLUMNS)
+    if not required.issubset(summary.columns):
+        return None
+    for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"):
+        summary[column] = pd.to_numeric(summary[column], errors="coerce")
+    return {"summary": summary, **metadata}
+
+
+def save_encrypted_ads_snapshot(
+    source_root: Path,
+    output_path: Path,
+    key: str,
+) -> None:
+    snapshot = load_ads_snapshot(source_root)
+    if snapshot is None:
+        raise AdsDataError("Chưa có Ads snapshot hợp lệ để mã hóa.")
+    try:
+        cipher = Fernet(key.strip().encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        raise AdsDataError("PUBLISHED_SNAPSHOT_KEY không phải Fernet key hợp lệ.") from exc
+    payload = {
+        "encrypted_schema_version": ENCRYPTED_SCHEMA_VERSION,
+        "metadata": {key: value for key, value in snapshot.items() if key != "summary"},
+        "summary_csv": snapshot["summary"].to_csv(index=False),
+    }
+    encrypted = cipher.encrypt(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".tmp")
+    temporary.write_bytes(encrypted)
+    temporary.replace(output_path)
+
+
+def load_encrypted_ads_snapshot(
+    path: Path,
+    key: str,
+) -> dict[str, Any] | None:
+    if not path.exists() or not key.strip():
+        return None
+    try:
+        decrypted = Fernet(key.strip().encode("utf-8")).decrypt(path.read_bytes())
+        payload = json.loads(decrypted.decode("utf-8"))
+    except (OSError, ValueError, InvalidToken, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if payload.get("encrypted_schema_version") != ENCRYPTED_SCHEMA_VERSION:
+        return None
+    metadata = payload.get("metadata", {})
+    if metadata.get("schema_version") != SCHEMA_VERSION:
+        return None
+    summary = pd.read_csv(StringIO(payload.get("summary_csv", "")), keep_default_na=False)
     required = set(SNAPSHOT_DIMENSIONS + SUMMARY_COLUMNS)
     if not required.issubset(summary.columns):
         return None

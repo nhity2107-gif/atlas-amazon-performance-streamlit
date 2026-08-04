@@ -157,23 +157,35 @@ def ingest_order_report(
     scope: str,
     replace_start: str | None = None,
     replace_end: str | None = None,
+    as_of_date: str | None = None,
 ) -> dict[str, object]:
-    if scope not in {"daily", "weekly", "monthly"}:
+    if scope not in {"daily", "weekly", "monthly", "mtd"}:
         raise ValueError(f"Scope không hợp lệ: {scope}")
     if bool(replace_start) != bool(replace_end):
         raise ValueError("replace_start và replace_end phải được truyền cùng nhau.")
     if scope == "daily" and replace_start:
         raise ValueError("Khoảng thay thế chỉ dùng cho report weekly hoặc monthly.")
+    if scope == "mtd" and (replace_start or replace_end):
+        raise ValueError("Scope mtd tự xác định khoảng thay thế; không truyền replace_start/end.")
+    if scope == "mtd" and not as_of_date:
+        raise ValueError("Scope mtd cần as_of_date (YYYY-MM-DD).")
     rows = prepare_order_rows(path, store, scope)
     if rows.empty:
         raise ValueError("Report không có order hợp lệ để lưu.")
     period_start = str(rows["purchase_date_pacific"].min())
     period_end = str(rows["purchase_date_pacific"].max())
-    replacement_start = replace_start or period_start
-    replacement_end = replace_end or period_end
+    if scope == "mtd":
+        parsed_as_of = pd.Timestamp(as_of_date).normalize()
+        replacement_start = parsed_as_of.replace(day=1).strftime("%Y-%m-%d")
+        replacement_end = parsed_as_of.strftime("%Y-%m-%d")
+    else:
+        replacement_start = replace_start or period_start
+        replacement_end = replace_end or period_end
     if replacement_start > replacement_end:
         raise ValueError("Ngày bắt đầu khoảng thay thế phải trước hoặc bằng ngày kết thúc.")
-    if replace_start and (period_start < replacement_start or period_end > replacement_end):
+    if (replace_start or scope == "mtd") and (
+        period_start < replacement_start or period_end > replacement_end
+    ):
         raise ValueError(
             "Report có order nằm ngoài khoảng thay thế "
             f"{replacement_start} đến {replacement_end}."
@@ -183,7 +195,7 @@ def ingest_order_report(
     connection = connect(db_path)
     try:
         with connection:
-            if scope in {"weekly", "monthly"}:
+            if scope in {"weekly", "monthly", "mtd"}:
                 connection.execute(
                     "DELETE FROM order_items WHERE store = ? AND purchase_date_pacific BETWEEN ? AND ?",
                     (store, replacement_start, replacement_end),
@@ -232,8 +244,8 @@ def ingest_order_report(
                     scope,
                     path.name,
                     hashlib.sha256(path.read_bytes()).hexdigest(),
-                    replacement_start if scope in {"weekly", "monthly"} else period_start,
-                    replacement_end if scope in {"weekly", "monthly"} else period_end,
+                    replacement_start if scope in {"weekly", "monthly", "mtd"} else period_start,
+                    replacement_end if scope in {"weekly", "monthly", "mtd"} else period_end,
                     len(rows),
                     active_rows,
                 ),
@@ -246,7 +258,7 @@ def ingest_order_report(
         "period": f"{period_start} to {period_end}",
         "replaced_period": (
             f"{replacement_start} to {replacement_end}"
-            if scope in {"weekly", "monthly"}
+            if scope in {"weekly", "monthly", "mtd"}
             else None
         ),
         "rows": len(rows),
@@ -257,22 +269,30 @@ def ingest_order_report(
 def export_snapshot(
     db_path: Path,
     output_path: Path,
-    period_start: str,
-    period_end: str,
+    period_start: str | None = None,
+    period_end: str | None = None,
 ) -> dict[str, object]:
+    if bool(period_start) != bool(period_end):
+        raise ValueError("start và end phải được truyền cùng nhau khi giới hạn snapshot.")
     connection = connect(db_path)
     try:
+        date_clause = (
+            "AND purchase_date_pacific BETWEEN ? AND ?"
+            if period_start and period_end
+            else ""
+        )
+        params = (period_start, period_end) if date_clause else ()
         items = pd.read_sql_query(
-            """
+            f"""
             SELECT store, purchase_date_pacific, asin, record_id_hint,
                    revenue, amazon_order_id, quantity, imported_at
             FROM order_items
             WHERE lower(order_status) <> 'cancelled'
               AND currency = 'USD'
-              AND purchase_date_pacific BETWEEN ? AND ?
+              {date_clause}
             """,
             connection,
-            params=(period_start, period_end),
+            params=params,
         )
     finally:
         connection.close()
@@ -311,7 +331,11 @@ def export_snapshot(
     return {
         "rows": len(summary),
         "revenue": round(float(summary["Revenue"].sum()), 2),
-        "period": f"{period_start} to {period_end}",
+        "period": (
+            f"{period_start} to {period_end}"
+            if period_start and period_end
+            else f"{summary['Date'].min()} to {summary['Date'].max()}"
+        ),
         "source_updated_at": source_updated_at,
         "output": str(output_path),
     }
@@ -325,7 +349,9 @@ def parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--db", type=Path, required=True)
     ingest_parser.add_argument("--file", type=Path, required=True)
     ingest_parser.add_argument("--store", required=True, choices=["Wrappiness", "Pawsionate"])
-    ingest_parser.add_argument("--scope", required=True, choices=["daily", "weekly", "monthly"])
+    ingest_parser.add_argument(
+        "--scope", required=True, choices=["daily", "weekly", "monthly", "mtd"]
+    )
     ingest_parser.add_argument(
         "--replace-start",
         help="Ngày Pacific đầu khoảng cần thay thế (weekly/monthly, YYYY-MM-DD)",
@@ -334,11 +360,15 @@ def parser() -> argparse.ArgumentParser:
         "--replace-end",
         help="Ngày Pacific cuối khoảng cần thay thế (weekly/monthly, YYYY-MM-DD)",
     )
+    ingest_parser.add_argument(
+        "--as-of-date",
+        help="Ngày cuối của report month-to-date (scope mtd, YYYY-MM-DD)",
+    )
     export_parser = subparsers.add_parser("export-snapshot")
     export_parser.add_argument("--db", type=Path, required=True)
     export_parser.add_argument("--output", type=Path, required=True)
-    export_parser.add_argument("--start", required=True)
-    export_parser.add_argument("--end", required=True)
+    export_parser.add_argument("--start")
+    export_parser.add_argument("--end")
     return root
 
 
@@ -356,6 +386,7 @@ def main() -> None:
                 args.scope,
                 args.replace_start,
                 args.replace_end,
+                args.as_of_date,
             )
         )
     elif args.command == "export-snapshot":

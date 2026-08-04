@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date
 from pathlib import Path
 import sys
 
@@ -32,7 +33,15 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "snapshot/ads")
     parser.add_argument("--month", required=True, help="Reporting month in YYYY-MM")
     parser.add_argument("--store", default="Wrappiness")
+    parser.add_argument(
+        "--as-of-date",
+        help="Ngày cuối của report month-to-date (YYYY-MM-DD; mặc định hôm nay)",
+    )
     args = parser.parse_args()
+
+    as_of_date = args.as_of_date or date.today().isoformat()
+    if not as_of_date.startswith(args.month + "-"):
+        raise SystemExit("--as-of-date phải nằm trong --month đã chọn.")
 
     lark = load_lark_snapshot(args.lark_snapshot)
     if lark is None:
@@ -105,6 +114,9 @@ def main() -> None:
         {
             "month": args.month,
             "store": args.store,
+            "report_scope": "mtd",
+            "period_start": f"{args.month}-01",
+            "period_end": as_of_date,
             **source_metadata,
             "diagnostics": diagnostics,
         },

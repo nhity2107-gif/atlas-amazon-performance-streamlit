@@ -171,6 +171,84 @@ class LocalPipelineTests(unittest.TestCase):
                     "2026-07-07",
                 )
 
+    def test_mtd_report_replaces_month_start_through_as_of_date(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "atlas.db"
+            initial = root / "initial.txt"
+            mtd = root / "mtd.txt"
+            self.write_report(
+                initial,
+                [
+                    ["o1", "i1", "2026-08-01T08:00:00Z", "Shipped", "MFN", "USD", "B000000001", "sku-1", 1, 10, 0],
+                    ["o2", "i2", "2026-08-03T08:00:00Z", "Shipped", "MFN", "USD", "B000000002", "sku-2", 1, 20, 0],
+                ],
+            )
+            ingest_order_report(database, initial, "Wrappiness", "daily")
+            self.write_report(
+                mtd,
+                [
+                    ["o1", "i1", "2026-08-01T08:00:00Z", "Cancelled", "MFN", "USD", "B000000001", "sku-1", 1, 10, 0],
+                    ["o3", "i3", "2026-08-04T08:00:00Z", "Shipped", "MFN", "USD", "B000000003", "sku-3", 1, 30, 0],
+                ],
+            )
+
+            result = ingest_order_report(
+                database,
+                mtd,
+                "Wrappiness",
+                "mtd",
+                as_of_date="2026-08-04",
+            )
+
+            connection = sqlite3.connect(database)
+            try:
+                stored = connection.execute(
+                    "SELECT order_item_id, order_status FROM order_items ORDER BY order_item_id"
+                ).fetchall()
+            finally:
+                connection.close()
+            self.assertEqual(stored, [("i1", "Cancelled"), ("i3", "Shipped")])
+            self.assertEqual(result["replaced_period"], "2026-08-01 to 2026-08-04")
+
+    def test_mtd_rejects_rows_after_as_of_date(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report = root / "mtd.txt"
+            self.write_report(
+                report,
+                [["o1", "i1", "2026-08-05T08:00:00Z", "Shipped", "MFN", "USD", "B000000001", "sku-1", 1, 10, 0]],
+            )
+            with self.assertRaisesRegex(ValueError, "nằm ngoài khoảng thay thế"):
+                ingest_order_report(
+                    root / "atlas.db",
+                    report,
+                    "Wrappiness",
+                    "mtd",
+                    as_of_date="2026-08-04",
+                )
+
+    def test_full_snapshot_export_preserves_multiple_months(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "atlas.db"
+            report = root / "orders.txt"
+            snapshot = root / "dashboard.csv"
+            self.write_report(
+                report,
+                [
+                    ["o1", "i1", "2026-07-31T08:00:00Z", "Shipped", "MFN", "USD", "B000000001", "sku-1", 1, 10, 0],
+                    ["o2", "i2", "2026-08-01T08:00:00Z", "Shipped", "MFN", "USD", "B000000002", "sku-2", 1, 20, 0],
+                ],
+            )
+            ingest_order_report(database, report, "Wrappiness", "daily")
+
+            result = export_snapshot(database, snapshot)
+            frame = load_snapshot(snapshot)
+
+            self.assertEqual(set(frame["Date"]), {"2026-07-31", "2026-08-01"})
+            self.assertEqual(result["period"], "2026-07-31 to 2026-08-01")
+
 
 if __name__ == "__main__":
     unittest.main()

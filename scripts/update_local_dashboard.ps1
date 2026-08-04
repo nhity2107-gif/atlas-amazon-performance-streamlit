@@ -2,20 +2,19 @@ param(
     [ValidateSet("Wrappiness", "Pawsionate")]
     [string]$Store,
     [string]$Report,
-    [ValidateSet("daily", "weekly", "monthly")]
-    [string]$Scope = "daily",
-    [string]$Start = "2026-07-01",
-    [string]$End = "2026-07-30",
+    [ValidateSet("daily", "weekly", "monthly", "mtd")]
+    [string]$Scope = "mtd",
+    [string]$Start = (Get-Date -Day 1 -Format "yyyy-MM-dd"),
+    [string]$End = (Get-Date -Format "yyyy-MM-dd"),
     [switch]$Publish
 )
 
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
-$projectRoot = "D:\Atlas Amazon Performance"
+$dashboardRoot = Split-Path $PSScriptRoot -Parent
+$projectRoot = Split-Path $dashboardRoot -Parent
 $database = Join-Path $projectRoot "database\atlas.db"
-$pipeline = Join-Path $projectRoot "pipeline\local_data_pipeline.py"
-$localSnapshot = Join-Path $projectRoot "snapshot\dashboard_snapshot.csv"
-$dashboardRoot = Join-Path $projectRoot "dashboard"
+$pipeline = Join-Path $dashboardRoot "scripts\local_data_pipeline.py"
 $dashboardSnapshot = Join-Path $dashboardRoot "snapshot\dashboard_snapshot.csv"
 
 if (($Store -and -not $Report) -or ($Report -and -not $Store)) {
@@ -28,18 +27,17 @@ if ($Report) {
         $pipeline, "ingest-order", "--db", $database, "--file", $resolvedReport,
         "--store", $Store, "--scope", $Scope
     )
-    if ($Scope -in @("weekly", "monthly")) {
+    if ($Scope -eq "mtd") {
+        $ingestArgs += @("--as-of-date", $End)
+    } elseif ($Scope -in @("weekly", "monthly")) {
         $ingestArgs += @("--replace-start", $Start, "--replace-end", $End)
     }
     python @ingestArgs
     if ($LASTEXITCODE -ne 0) { throw "Không thể ingest order report." }
 }
 
-python $pipeline export-snapshot --db $database --output $localSnapshot --start $Start --end $End
+python $pipeline export-snapshot --db $database --output $dashboardSnapshot
 if ($LASTEXITCODE -ne 0) { throw "Không thể sinh snapshot dashboard." }
-
-New-Item -ItemType Directory -Force -Path (Split-Path $dashboardSnapshot) | Out-Null
-Copy-Item -LiteralPath $localSnapshot -Destination $dashboardSnapshot -Force
 
 if ($Publish) {
     git -C $dashboardRoot add snapshot/dashboard_snapshot.csv
@@ -52,4 +50,4 @@ if ($Publish) {
     }
 }
 
-Write-Host "Hoàn tất. Snapshot: $localSnapshot"
+Write-Host "Hoàn tất. Snapshot: $dashboardSnapshot"
