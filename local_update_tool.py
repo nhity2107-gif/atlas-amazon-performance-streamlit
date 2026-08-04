@@ -85,11 +85,16 @@ paw_order = order_cols[1].file_uploader(
 )
 
 st.markdown("### Ads Report · từ ngày 01 đến ngày input")
-ads_cols = st.columns(4)
-wr_sp = ads_cols[0].file_uploader("Wrappiness SP", type=["xlsx", "csv"], key="wr_sp")
-wr_sb = ads_cols[1].file_uploader("Wrappiness SB", type=["xlsx"], key="wr_sb")
-wr_sd = ads_cols[2].file_uploader("Wrappiness SD", type=["xlsx"], key="wr_sd")
-paw_sp = ads_cols[3].file_uploader("Pawsionate SP", type=["xlsx", "csv"], key="paw_sp")
+st.caption("Wrappiness · đủ SP, SB và SD")
+wr_ads_cols = st.columns(3)
+wr_sp = wr_ads_cols[0].file_uploader("Wrappiness SP", type=["xlsx", "csv"], key="wr_sp")
+wr_sb = wr_ads_cols[1].file_uploader("Wrappiness SB", type=["xlsx"], key="wr_sb")
+wr_sd = wr_ads_cols[2].file_uploader("Wrappiness SD", type=["xlsx"], key="wr_sd")
+st.caption("Pawsionate · đủ SP, SB và SD")
+paw_ads_cols = st.columns(3)
+paw_sp = paw_ads_cols[0].file_uploader("Pawsionate SP", type=["xlsx", "csv"], key="paw_sp")
+paw_sb = paw_ads_cols[1].file_uploader("Pawsionate SB", type=["xlsx"], key="paw_sb")
+paw_sd = paw_ads_cols[2].file_uploader("Pawsionate SD", type=["xlsx"], key="paw_sd")
 
 required_uploads = {
     "Wrappiness Order": wr_order,
@@ -98,6 +103,8 @@ required_uploads = {
     "Wrappiness SB": wr_sb,
     "Wrappiness SD": wr_sd,
     "Pawsionate SP": paw_sp,
+    "Pawsionate SB": paw_sb,
+    "Pawsionate SD": paw_sd,
 }
 
 if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container_width=True):
@@ -128,6 +135,12 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "paw_sp": save_upload(
                     paw_sp, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sp-mtd{Path(paw_sp.name).suffix}"
                 ),
+                "paw_sb": save_upload(
+                    paw_sb, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sb-mtd{Path(paw_sb.name).suffix}"
+                ),
+                "paw_sd": save_upload(
+                    paw_sd, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sd-mtd{Path(paw_sd.name).suffix}"
+                ),
             }
 
             order_checks = {
@@ -142,7 +155,11 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 read_ads_workbook(files["wr_sb"], "SB"),
                 read_ads_workbook(files["wr_sd"], "SD"),
             ]
-            paw_reports = [read_ads_workbook(files["paw_sp"], "SP")]
+            paw_reports = [
+                read_ads_workbook(files["paw_sp"], "SP"),
+                read_ads_workbook(files["paw_sb"], "SB"),
+                read_ads_workbook(files["paw_sd"], "SD"),
+            ]
             wr_summary, wr_diagnostics = build_ads_employee_summary_from_reports(
                 wr_reports, lark["total"]
             )
@@ -182,7 +199,7 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 {
                     **common_metadata,
                     "store": "Pawsionate",
-                    "mapping_mode": "complete-sp-only",
+                    "mapping_mode": "complete-sp-sb-sd",
                     "diagnostics": paw_diagnostics,
                 },
             )

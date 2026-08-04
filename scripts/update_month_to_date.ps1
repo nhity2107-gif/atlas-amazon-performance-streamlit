@@ -7,6 +7,8 @@ param(
     [string]$WrappinessSB,
     [string]$WrappinessSD,
     [string]$PawsionateSP,
+    [string]$PawsionateSB,
+    [string]$PawsionateSD,
     [switch]$PublishOrderSnapshot
 )
 
@@ -17,7 +19,8 @@ if (-not $AsOfDate.StartsWith("$Month-")) {
     throw "AsOfDate phải nằm trong Month đã chọn."
 }
 if (-not ($WrappinessOrder -or $PawsionateOrder -or $WrappinessSP -or
-          $WrappinessSB -or $WrappinessSD -or $PawsionateSP)) {
+          $WrappinessSB -or $WrappinessSD -or $PawsionateSP -or
+          $PawsionateSB -or $PawsionateSD)) {
     throw "Cần cung cấp ít nhất một Order hoặc Ads report để cập nhật."
 }
 
@@ -63,9 +66,14 @@ if ($WrappinessSP -or $WrappinessSB -or $WrappinessSD) {
     if ($LASTEXITCODE -ne 0) { throw "Không thể import Ads MTD cho Wrappiness." }
 }
 
-if ($PawsionateSP) {
+if ($PawsionateSP -or $PawsionateSB -or $PawsionateSD) {
+    if (-not ($PawsionateSP -and $PawsionateSB -and $PawsionateSD)) {
+        throw "Pawsionate cần đủ ba report SP, SB và SD."
+    }
     python $adsPipeline `
         --sponsored-products (Resolve-Path -LiteralPath $PawsionateSP).Path `
+        --sponsored-brands (Resolve-Path -LiteralPath $PawsionateSB).Path `
+        --sponsored-display (Resolve-Path -LiteralPath $PawsionateSD).Path `
         --month $Month `
         --as-of-date $AsOfDate `
         --store Pawsionate

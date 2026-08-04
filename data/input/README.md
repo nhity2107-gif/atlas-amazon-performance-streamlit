@@ -42,10 +42,9 @@ Examples for July 2026:
 2026-07__wrappiness__ads__sd-campaign.xlsx
 2026-07__pawsionate__order__mtd.txt
 2026-07__pawsionate__ads__sp-advertised-product.xlsx
+2026-07__pawsionate__ads__sb-campaign.xlsx
+2026-07__pawsionate__ads__sd-campaign.xlsx
 ```
-
-For Pawsionate, an SP-only workbook import is valid when SB and SD are declared
-`not-applicable` in the monthly manifest.
 
 ## Required source definitions
 

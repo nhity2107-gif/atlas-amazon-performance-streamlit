@@ -16,7 +16,9 @@ the input date. Run one command after downloading the reports:
   -WrappinessSP "D:\reports\wrappiness-sp.xlsx" `
   -WrappinessSB "D:\reports\wrappiness-sb.xlsx" `
   -WrappinessSD "D:\reports\wrappiness-sd.xlsx" `
-  -PawsionateSP "D:\reports\pawsionate-sp.xlsx"
+  -PawsionateSP "D:\reports\pawsionate-sp.xlsx" `
+  -PawsionateSB "D:\reports\pawsionate-sb.xlsx" `
+  -PawsionateSD "D:\reports\pawsionate-sd.xlsx"
 ```
 
 The `mtd` import deletes the existing Store interval from day 01 through
@@ -37,7 +39,7 @@ Run the PC-only uploader on `http://127.0.0.1:8502`:
 & "D:\Atlas Amazon Performance\dashboard\scripts\run_update_tool.ps1"
 ```
 
-The tool accepts all six MTD files, validates Order date coverage and Ads/Lark
+The tool accepts all eight MTD files, validates Order date coverage and Ads/Lark
 mapping, updates the local snapshots, runs tests, then publishes only the
 aggregate Order snapshot plus an encrypted Ads snapshot. Because the GitHub
 repository is public, initialize a Fernet key once:
@@ -61,7 +63,7 @@ Validate a month before importing:
 
 ```bash
 python scripts/validate_input_layout.py --month 2026-07 --store wrappiness --require-all-ads
-python scripts/validate_input_layout.py --month 2026-07 --store pawsionate
+python scripts/validate_input_layout.py --month 2026-07 --store pawsionate --require-all-ads
 ```
 
 ## Persistent Order data workflow
@@ -129,11 +131,10 @@ python scripts/import_ads_reports.py \
 
 python scripts/import_ads_reports.py \
   --sponsored-products "data/input/2026-07/pawsionate/ads/2026-07__pawsionate__ads__sp-advertised-product.xlsx" \
+  --sponsored-brands "data/input/2026-07/pawsionate/ads/2026-07__pawsionate__ads__sb-campaign.xlsx" \
+  --sponsored-display "data/input/2026-07/pawsionate/ads/2026-07__pawsionate__ads__sd-campaign.xlsx" \
   --month 2026-07 --store Pawsionate
 ```
-
-Pawsionate accepts a complete SP workbook without SB/SD because those two Ads
-types are declared `not-applicable` for this store and month.
 
 Legacy interval update:
 

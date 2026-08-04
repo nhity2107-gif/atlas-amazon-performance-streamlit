@@ -53,14 +53,7 @@ def main() -> None:
     ]
     if any(path is not None for _, path in complete_sources):
         missing_sources = [kind for kind, path in complete_sources if path is None]
-        store_slug = args.store.strip().casefold()
-        pawsionate_sp_only = (
-            store_slug == "pawsionate"
-            and args.sponsored_products is not None
-            and args.sponsored_brands is None
-            and args.sponsored_display is None
-        )
-        if missing_sources and not pawsionate_sp_only:
+        if missing_sources:
             raise SystemExit(
                 "Import workbook mới cần đủ SP, SB và SD; còn thiếu: "
                 + ", ".join(missing_sources)
@@ -81,9 +74,7 @@ def main() -> None:
             "sponsored_display_source": (
                 args.sponsored_display.name if args.sponsored_display else ""
             ),
-            "mapping_mode": (
-                "complete-sp-only" if pawsionate_sp_only else "complete-sp-sb-sd"
-            ),
+            "mapping_mode": "complete-sp-sb-sd",
         }
     else:
         if args.products is None:

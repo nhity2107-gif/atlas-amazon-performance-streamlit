@@ -241,7 +241,7 @@ của dòng ASIN sau khi lọc ngày.
   cộng các store đã import rồi tính lại ACOS từ tổng Spend/Sales.
 - Import Ads hằng ngày là month-to-date và thay thế toàn bộ cùng Store + Month;
   metadata lưu `period_start`, `period_end` để dashboard hiển thị ngày cập nhật.
-- Local Update Tool chạy riêng trên `127.0.0.1:8502`, nhận đủ 2 Order + 4 Ads
+- Local Update Tool chạy riêng trên `127.0.0.1:8502`, nhận đủ 2 Order + 6 Ads
   report, sinh snapshot và có nút publish. Vì GitHub public, chỉ
   `snapshot/published_ads_snapshot.enc` đã mã hóa Fernet được phép push;
   Streamlit giải mã bằng `PUBLISHED_SNAPSHOT_KEY` trong Secrets.
