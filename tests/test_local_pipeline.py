@@ -228,6 +228,46 @@ class LocalPipelineTests(unittest.TestCase):
                     as_of_date="2026-08-04",
                 )
 
+    def test_empty_mtd_report_clears_existing_store_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "atlas.db"
+            initial = root / "initial.txt"
+            empty_mtd = root / "empty-mtd.txt"
+            self.write_report(
+                initial,
+                [["o1", "i1", "2026-08-02T08:00:00Z", "Shipped", "MFN", "USD", "B000000001", "sku-1", 1, 10, 0]],
+            )
+            ingest_order_report(database, initial, "Pawsionate", "daily")
+            self.write_report(empty_mtd, [])
+
+            result = ingest_order_report(
+                database,
+                empty_mtd,
+                "Pawsionate",
+                "mtd",
+                as_of_date="2026-08-04",
+            )
+
+            connection = sqlite3.connect(database)
+            try:
+                stored_count = connection.execute(
+                    "SELECT COUNT(*) FROM order_items WHERE store = ?",
+                    ("Pawsionate",),
+                ).fetchone()[0]
+                imported = connection.execute(
+                    "SELECT period_start, period_end, source_rows FROM imports "
+                    "WHERE store = ? ORDER BY rowid DESC LIMIT 1",
+                    ("Pawsionate",),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(stored_count, 0)
+            self.assertEqual(imported, ("2026-08-01", "2026-08-04", 0))
+            self.assertEqual(result["rows"], 0)
+            self.assertEqual(result["replaced_period"], "2026-08-01 to 2026-08-04")
+
     def test_full_snapshot_export_preserves_multiple_months(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

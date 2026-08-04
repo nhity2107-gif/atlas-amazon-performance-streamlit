@@ -170,20 +170,30 @@ def ingest_order_report(
     if scope == "mtd" and not as_of_date:
         raise ValueError("Scope mtd cần as_of_date (YYYY-MM-DD).")
     rows = prepare_order_rows(path, store, scope)
-    if rows.empty:
-        raise ValueError("Report không có order hợp lệ để lưu.")
-    period_start = str(rows["purchase_date_pacific"].min())
-    period_end = str(rows["purchase_date_pacific"].max())
     if scope == "mtd":
         parsed_as_of = pd.Timestamp(as_of_date).normalize()
         replacement_start = parsed_as_of.replace(day=1).strftime("%Y-%m-%d")
         replacement_end = parsed_as_of.strftime("%Y-%m-%d")
+        period_start = (
+            str(rows["purchase_date_pacific"].min())
+            if not rows.empty
+            else replacement_start
+        )
+        period_end = (
+            str(rows["purchase_date_pacific"].max())
+            if not rows.empty
+            else replacement_end
+        )
     else:
+        if rows.empty:
+            raise ValueError("Report không có order hợp lệ để lưu.")
+        period_start = str(rows["purchase_date_pacific"].min())
+        period_end = str(rows["purchase_date_pacific"].max())
         replacement_start = replace_start or period_start
         replacement_end = replace_end or period_end
     if replacement_start > replacement_end:
         raise ValueError("Ngày bắt đầu khoảng thay thế phải trước hoặc bằng ngày kết thúc.")
-    if (replace_start or scope == "mtd") and (
+    if not rows.empty and (replace_start or scope == "mtd") and (
         period_start < replacement_start or period_end > replacement_end
     ):
         raise ValueError(

@@ -36,7 +36,12 @@ def save_upload(upload, path: Path) -> Path:
 def validate_order_window(path: Path, store: str, month: str, as_of: date) -> dict:
     rows = prepare_order_rows(path, store, "mtd")
     if rows.empty:
-        raise ValueError(f"Order report {store} không có dòng ASIN hợp lệ.")
+        return {
+            "rows": 0,
+            "date_min": None,
+            "date_max": None,
+            "status": "no-orders",
+        }
     start = f"{month}-01"
     end = as_of.isoformat()
     minimum = str(rows["purchase_date_pacific"].min())
@@ -46,7 +51,12 @@ def validate_order_window(path: Path, store: str, month: str, as_of: date) -> di
             f"Order report {store} có Purchase Date {minimum}–{maximum}, "
             f"nằm ngoài kỳ MTD {start}–{end}."
         )
-    return {"rows": len(rows), "date_min": minimum, "date_max": maximum}
+    return {
+        "rows": len(rows),
+        "date_min": minimum,
+        "date_max": maximum,
+        "status": "valid",
+    }
 
 
 def run_git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -214,6 +224,14 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "ads_sales": round(float(wr_summary["Ads_Sales"].sum() + paw_summary["Ads_Sales"].sum()), 2),
             }
             st.success("Đã kiểm tra và sinh snapshot dashboard thành công.")
+            zero_order_stores = [
+                store for store, check in order_checks.items() if check["rows"] == 0
+            ]
+            if zero_order_stores:
+                st.warning(
+                    "Đã chấp nhận report 0 order và xóa dữ liệu MTD cũ: "
+                    + ", ".join(zero_order_stores)
+                )
         except Exception as exc:
             st.exception(exc)
 
@@ -225,6 +243,12 @@ if "last_build" in st.session_state:
     metrics[1].metric("Order revenue", f"${build['order_snapshot']['revenue']:,.2f}")
     metrics[2].metric("Ads spend", f"${build['ads_spend']:,.2f}")
     metrics[3].metric("Ads sales", f"${build['ads_sales']:,.2f}")
+    order_status = ", ".join(
+        f"{store}: {check['rows']:,} dòng"
+        + (" (0 order hợp lệ)" if check["rows"] == 0 else "")
+        for store, check in build["order_checks"].items()
+    )
+    st.caption(f"Order reports · {order_status}")
     st.caption(f"Raw reports: {build['raw_root']}")
 
     st.markdown("### Publish lên Streamlit")
