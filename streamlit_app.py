@@ -1030,10 +1030,20 @@ selected_order_rows = selected_order_performance(
     list(STORES) if store == "All Stores" else [store],
     selected_month,
 )
+order_snapshot_metadata = load_snapshot_metadata(PERSISTED_SNAPSHOT_PATH)
+report_as_of_date = pd.to_datetime(
+    order_snapshot_metadata.get("report_as_of_date"), errors="coerce"
+)
 if not selected_order_rows.empty:
     live_through = pd.to_datetime(selected_order_rows["Date"], errors="coerce").max()
     if pd.notna(live_through):
-        st.caption(f"Order snapshot đang cập nhật đến hết ngày {live_through:%d/%m/%Y}.")
+        if pd.notna(report_as_of_date) and report_as_of_date.normalize() > live_through.normalize():
+            st.caption(
+                f"Order Report MTD đã input đến {report_as_of_date:%d/%m/%Y}; "
+                f"Purchase Date mới nhất có order là {live_through:%d/%m/%Y}."
+            )
+        else:
+            st.caption(f"Order snapshot đang cập nhật đến hết ngày {live_through:%d/%m/%Y}.")
 if data["snapshot_backed"]:
     notice_text = (
         f'{data["snapshot_rows"]:,} dòng tổng hợp theo ngày/ASIN · Cancelled đã loại tại pipeline · '
@@ -1823,4 +1833,10 @@ else:
                     "trong Streamlit Secrets còn hiệu lực."
                 )
 
-st.caption("Atlas Performance OS · Internal dashboard · Order data as of 30 Jul 2026")
+footer_as_of = report_as_of_date
+if pd.isna(footer_as_of) and not selected_order_rows.empty:
+    footer_as_of = pd.to_datetime(selected_order_rows["Date"], errors="coerce").max()
+footer_label = (
+    footer_as_of.strftime("%d %b %Y") if pd.notna(footer_as_of) else "chưa xác định"
+)
+st.caption(f"Atlas Performance OS · Internal dashboard · Report input as of {footer_label}")
