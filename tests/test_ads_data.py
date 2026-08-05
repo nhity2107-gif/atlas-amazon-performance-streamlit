@@ -150,7 +150,7 @@ class AdsDataTests(unittest.TestCase):
         ]
         total = pd.DataFrame([
             {"asin": "B000000001", "record_id": "rec1", "ads_by": "Owner A", "custom_by": "", "fulfill_by": "FBM"},
-            {"asin": "B000000002", "record_id": "rec2", "ads_by": "Owner B", "custom_by": "", "fulfill_by": "FBM"},
+            {"asin": "B000000002", "record_id": "rec2", "ads_by": "Owner B", "custom_by": "Trương Ý Nhi", "fulfill_by": "FBA"},
             {"asin": "B000000003", "record_id": "rec3", "ads_by": "Owner A", "custom_by": "Phương Linh/MRnD", "fulfill_by": "FBA"},
         ])
 
@@ -160,9 +160,21 @@ class AdsDataTests(unittest.TestCase):
         self.assertEqual(indexed.loc["Owner A", "Ads_Spend"], 100)
         self.assertEqual(indexed.loc["Nhi-Support", "Ads_Spend"], 10)
         self.assertEqual(indexed.loc["Linh-FBA", "Ads_Spend"], 20)
+        self.assertEqual(indexed.loc["Owner A", "FBM_Ads_Spend"], 100)
+        self.assertEqual(indexed.loc["Nhi-Support", "FBM_Ads_Spend"], 0)
+        self.assertEqual(indexed.loc["Linh-FBA", "FBM_Ads_Spend"], 0)
         self.assertAlmostEqual(summary["Ads_Spend"].sum(), 130)
+        self.assertAlmostEqual(summary["FBM_Ads_Spend"].sum(), 100)
         self.assertEqual(diagnostics["by_type"]["SP"]["spend"], 110)
         self.assertEqual(diagnostics["by_type"]["SB"]["sales"], 80)
+
+        snapshot = {
+            "summary": summary.assign(Month="2026-07", Store="Wrappiness"),
+            "imports": [{"month": "2026-07", "store": "Wrappiness"}],
+        }
+        fbm, _ = select_ads_summary(snapshot, "2026-07", "All Stores", fbm_only=True)
+        self.assertEqual(fbm["Nhân sự"].tolist(), ["Owner A"])
+        self.assertEqual(fbm.iloc[0]["Ads_Spend"], 100)
 
     def test_support_transfer_is_separate_and_preserves_totals(self) -> None:
         products = pd.DataFrame(
@@ -260,6 +272,13 @@ class AdsDataTests(unittest.TestCase):
         combined, imports = select_ads_summary(snapshot, "2026-07", "All Stores")
         self.assertEqual(combined.set_index("Nhân sự").loc["Linh-FBA", "Ads_Spend"], 20)
         self.assertEqual(len(imports), 2)
+        legacy_fbm, _ = select_ads_summary(
+            snapshot, "2026-07", "All Stores", fbm_only=True
+        )
+        self.assertNotIn("Linh-FBA", set(legacy_fbm["Nhân sự"]))
+        self.assertEqual(
+            legacy_fbm.set_index("Nhân sự").loc["Owner A", "Ads_Spend"], 40
+        )
 
     def test_confirmed_fba_override_moves_ads_metrics_to_nhi_fba(self) -> None:
         products = pd.DataFrame([

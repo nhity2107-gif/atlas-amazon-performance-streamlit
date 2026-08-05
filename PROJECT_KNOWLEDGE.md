@@ -159,7 +159,8 @@ của dòng ASIN sau khi lọc ngày.
 - `Ads Spend = tổng Spend`; `Ads Sales = tổng Sales`;
   `ACOS = Ads Spend / Ads Sales`.
 - `TACOS = Ads Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership
-  Revenue. Revenue FBA được chuyển khỏi Ads By gốc sang `Nhi-FBA`/`Linh-FBA`.
+  Revenue. Trong trang Ads tổng, FBA vẫn được đối soát riêng; trong Team KPI,
+  toàn bộ Order Revenue/Units và Ads Spend/Sales/Orders FBA bị loại.
   `Nhi-Support`, `Linh`, `Hieu` và `Ha` là các hàng Ads thực thi, không nhận
   Revenue và TACOS phải là `N/A`.
 - Wrappiness dùng đủ ba workbook SP/SB/SD. SP map trực tiếp bằng `Advertised
@@ -187,8 +188,8 @@ của dòng ASIN sau khi lọc ngày.
 - Milestone dùng Purchase Month của Order snapshot đã đổi sang Los Angeles.
 - Đây là chỉ số toàn portfolio ownership, không giới hạn Pickup/Listing/Testing
   cohort. Revenue của toàn bộ ASIN cùng Record ID được cộng trước khi so ngưỡng.
-- Idea dùng `Idea By`; Product dùng `Managed By`; Ads dùng `Ads By`, riêng FBA
-  tiếp tục phân bổ sang `Nhi-FBA`/`Linh-FBA`. Các hàng thực thi `Nhi-Support`,
+- Idea dùng `Idea By`; Product dùng `Managed By`; Ads dùng `Ads By`, chỉ trên
+  các ASIN `Fulfill By = FBM`. FBA không tham gia KPI nhân sự. Các hàng thực thi `Nhi-Support`,
   `Linh`, `Hieu`, `Ha` không có ownership Order Revenue nên milestone bằng 0.
 
 ## 8. Snapshot và cập nhật dữ liệu

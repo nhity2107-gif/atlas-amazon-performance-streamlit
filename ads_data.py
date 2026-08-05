@@ -32,6 +32,12 @@ SUMMARY_COLUMNS = [
     "Ads_Orders",
     "ACOS",
 ]
+FBM_METRIC_COLUMNS = [
+    "FBM_ASINs",
+    "FBM_Ads_Spend",
+    "FBM_Ads_Sales",
+    "FBM_Ads_Orders",
+]
 STANDARD_REPORT_COLUMNS = [
     "ASIN",
     "Campaign name",
@@ -231,10 +237,8 @@ def build_ads_employee_summary_from_reports(
         execution_masks[assignee] = marker_mask
         assigned_execution |= marker_mask
 
-    fba_mask = (
-        rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
-        & ~assigned_execution
-    )
+    catalog_fba_mask = rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
+    fba_mask = catalog_fba_mask & ~assigned_execution
     normalized_custom = rows.loc[fba_mask, "custom_by"].fillna("").map(normalize_person)
     rows.loc[fba_mask, "Nhân sự"] = ""
     rows.loc[
@@ -271,6 +275,18 @@ def build_ads_employee_summary_from_reports(
     summary["ACOS"] = summary["Ads_Spend"].div(
         summary["Ads_Sales"].where(summary["Ads_Sales"].ne(0))
     )
+    fbm_summary = (
+        rows.loc[~catalog_fba_mask]
+        .groupby("Nhân sự", as_index=False)
+        .agg(
+            FBM_ASINs=("ASIN", "nunique"),
+            FBM_Ads_Spend=("ad_spend", "sum"),
+            FBM_Ads_Sales=("ad_sales", "sum"),
+            FBM_Ads_Orders=("ad_orders", "sum"),
+        )
+    )
+    summary = summary.merge(fbm_summary, on="Nhân sự", how="left")
+    summary[FBM_METRIC_COLUMNS] = summary[FBM_METRIC_COLUMNS].fillna(0)
     baseline = rows[["ad_spend", "ad_sales", "ad_orders"]].sum()
     final = summary[["Ads_Spend", "Ads_Sales", "Ads_Orders"]].sum()
     final.index = ["ad_spend", "ad_sales", "ad_orders"]
@@ -329,7 +345,9 @@ def build_ads_employee_summary_from_reports(
             for assignee, group in fba.groupby("Nhân sự")
         },
     }
-    return summary[SUMMARY_COLUMNS].sort_values("Ads_Spend", ascending=False), diagnostics
+    return summary[SUMMARY_COLUMNS + FBM_METRIC_COLUMNS].sort_values(
+        "Ads_Spend", ascending=False
+    ), diagnostics
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -585,8 +603,10 @@ def load_ads_snapshot(root: Path) -> dict[str, Any] | None:
     required = set(SNAPSHOT_DIMENSIONS + SUMMARY_COLUMNS)
     if not required.issubset(summary.columns):
         return None
-    for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"):
-        summary[column] = pd.to_numeric(summary[column], errors="coerce")
+    numeric_columns = ["ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS", *FBM_METRIC_COLUMNS]
+    for column in numeric_columns:
+        if column in summary:
+            summary[column] = pd.to_numeric(summary[column], errors="coerce")
     return {"summary": summary, **metadata}
 
 
@@ -636,8 +656,10 @@ def load_encrypted_ads_snapshot(
     required = set(SNAPSHOT_DIMENSIONS + SUMMARY_COLUMNS)
     if not required.issubset(summary.columns):
         return None
-    for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"):
-        summary[column] = pd.to_numeric(summary[column], errors="coerce")
+    numeric_columns = ["ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS", *FBM_METRIC_COLUMNS]
+    for column in numeric_columns:
+        if column in summary:
+            summary[column] = pd.to_numeric(summary[column], errors="coerce")
     return {"summary": summary, **metadata}
 
 
@@ -645,6 +667,7 @@ def select_ads_summary(
     snapshot: dict[str, Any] | None,
     month: str,
     store: str,
+    fbm_only: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     if snapshot is None:
         return pd.DataFrame(columns=SUMMARY_COLUMNS), []
@@ -655,15 +678,37 @@ def select_ads_summary(
         imports = [item for item in imports if item.get("store") == store]
     if selected.empty:
         return pd.DataFrame(columns=SUMMARY_COLUMNS), []
-    combined = (
-        selected.groupby("Nhân sự", as_index=False)
-        .agg(
-            ASINs=("ASINs", "sum"),
-            Ads_Spend=("Ads_Spend", "sum"),
-            Ads_Sales=("Ads_Sales", "sum"),
-            Ads_Orders=("Ads_Orders", "sum"),
-        )
+    has_complete_fbm_metrics = (
+        set(FBM_METRIC_COLUMNS).issubset(selected.columns)
+        and selected[FBM_METRIC_COLUMNS].notna().all().all()
     )
+    if fbm_only and has_complete_fbm_metrics:
+        combined = (
+            selected.groupby("Nhân sự", as_index=False)
+            .agg(
+                ASINs=("FBM_ASINs", "sum"),
+                Ads_Spend=("FBM_Ads_Spend", "sum"),
+                Ads_Sales=("FBM_Ads_Sales", "sum"),
+                Ads_Orders=("FBM_Ads_Orders", "sum"),
+            )
+        )
+        combined = combined.loc[
+            combined[["Ads_Spend", "Ads_Sales", "Ads_Orders"]].abs().sum(axis=1).gt(0)
+        ]
+    else:
+        if fbm_only:
+            selected = selected.loc[
+                ~selected["Nhân sự"].fillna("").astype(str).str.endswith("-FBA")
+            ]
+        combined = (
+            selected.groupby("Nhân sự", as_index=False)
+            .agg(
+                ASINs=("ASINs", "sum"),
+                Ads_Spend=("Ads_Spend", "sum"),
+                Ads_Sales=("Ads_Sales", "sum"),
+                Ads_Orders=("Ads_Orders", "sum"),
+            )
+        )
     combined["ACOS"] = combined["Ads_Spend"].div(
         combined["Ads_Sales"].where(combined["Ads_Sales"].ne(0))
     )

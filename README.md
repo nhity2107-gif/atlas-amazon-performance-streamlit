@@ -113,6 +113,13 @@ The Overview splits Net Revenue into FBA and FBM using TOTAL ASIN `Fulfill By`.
 It maps by ASIN first and falls back to the Order snapshot `record_id_hint`, so
 FBA + FBM reconciles to Net Revenue for the selected store.
 
+Team KPI is intentionally FBM-only. All employee Order-derived metrics
+(Revenue, Units, winners, milestones, Portfolio/New Revenue and ASIN counts)
+filter to `Fulfill By = FBM`. Employee Ads KPI uses separate FBM-only Spend,
+Sales and Orders fields, so FBA is excluded even when a campaign is assigned to
+Support or an execution marker. Overview and aggregate Ads Performance continue
+to show FBA + FBM for store reconciliation.
+
 ## Local Ads allocation
 
 Complete Sponsored Products, Sponsored Brands and Sponsored Display workbooks

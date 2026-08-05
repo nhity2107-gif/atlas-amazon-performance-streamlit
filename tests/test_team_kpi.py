@@ -4,10 +4,22 @@ import unittest
 
 import pandas as pd
 
-from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue
+from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue, fbm_asin_rows
 
 
 class TeamKpiTests(unittest.TestCase):
+    def test_fbm_asin_rows_excludes_fba_and_unmapped(self) -> None:
+        attributed = pd.DataFrame(
+            [
+                {"asin": "fbm", "fulfill_by": " FBM ", "Revenue": 100},
+                {"asin": "fba", "fulfill_by": "FBA", "Revenue": 200},
+                {"asin": "unknown", "fulfill_by": "", "Revenue": 300},
+            ]
+        )
+        result = fbm_asin_rows(attributed)
+        self.assertEqual(result["asin"].tolist(), ["fbm"])
+        self.assertEqual(result["Revenue"].sum(), 100)
+
     def test_new_revenue_only_counts_each_asin_inside_custom_done_cohort(self) -> None:
         attributed = pd.DataFrame(
             [

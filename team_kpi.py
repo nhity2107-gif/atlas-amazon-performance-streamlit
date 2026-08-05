@@ -3,6 +3,16 @@ from __future__ import annotations
 import pandas as pd
 
 
+def fbm_asin_rows(attributed_asins: pd.DataFrame) -> pd.DataFrame:
+    """Return only explicitly FBM-owned ASIN rows for employee KPI calculations."""
+    if "fulfill_by" not in attributed_asins.columns:
+        raise ValueError("KPI fulfillment source thiếu cột: fulfill_by")
+    fulfillment = (
+        attributed_asins["fulfill_by"].fillna("").astype(str).str.strip().str.casefold()
+    )
+    return attributed_asins.loc[fulfillment.eq("fbm")].copy()
+
+
 def asin_portfolio_revenue(
     attributed_asins: pd.DataFrame,
     owner_column: str,

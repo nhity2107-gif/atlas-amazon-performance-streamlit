@@ -34,7 +34,7 @@ from snapshot_store import (
     load_snapshot,
     load_snapshot_metadata,
 )
-from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue
+from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue, fbm_asin_rows
 
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
@@ -657,10 +657,25 @@ def employee_kpi_tables(
     ads_imports: list[dict] | None = None,
 ) -> dict[str, pd.DataFrame]:
     records = attribution["records"].copy()
-    attributed_asins = attribution.get("attributed_asins", pd.DataFrame()).copy()
+    attributed_asins = fbm_asin_rows(
+        attribution.get("attributed_asins", pd.DataFrame()).copy()
+    )
     cliparts = attribution["cliparts"].copy()
+    fbm_record_ids = set(attributed_asins["record_id"].dropna().astype(str))
+    records = records.loc[records["record_id"].astype(str).isin(fbm_record_ids)].copy()
     if records.empty:
         return {}
+
+    fbm_record_metrics = (
+        attributed_asins.groupby("record_id", as_index=False)
+        .agg(Revenue=("Revenue", "sum"), Orders=("Orders", "sum"), Units=("Units", "sum"))
+    )
+    records = records.drop(columns=["Revenue", "Orders", "Units"], errors="ignore").merge(
+        fbm_record_metrics, on="record_id", how="left"
+    )
+    records[["Revenue", "Orders", "Units"]] = records[
+        ["Revenue", "Orders", "Units"]
+    ].fillna(0)
 
     cohort_start = validation_cohort_start(window_end)
     records["validated"] = records["Units"].ge(10)
@@ -669,6 +684,9 @@ def employee_kpi_tables(
         return records[records[column].fillna("").str.strip().ne("")].copy()
 
     idea_events = attribution.get("ideas", pd.DataFrame()).copy()
+    idea_events = idea_events.loc[
+        idea_events["record_id"].astype(str).isin(fbm_record_ids)
+    ].copy()
     idea_events["qualified"] = in_lark_calendar_window(
         idea_events["handover_date"], window_start, window_end
     )
@@ -824,29 +842,13 @@ def employee_kpi_tables(
         )
         .rename(columns={"ads_by": "Nhân sự"})
     )
-    # Portfolio Revenue follows Ads ownership, except FBA which follows Custom By.
-    # Campaign execution rows have no owned Order Revenue; they arrive only from Ads allocation.
+    # Employee KPI revenue is FBM-only. Campaign execution rows have no owned
+    # Order Revenue; they arrive only from the FBM Ads allocation.
     revenue_asins = attributed_asins.copy()
     revenue_asins = revenue_asins[
         revenue_asins["ads_by"].fillna("").str.strip().ne("")
     ]
     revenue_asins["Revenue_Owner"] = revenue_asins["ads_by"]
-    fba_mask = revenue_asins.get(
-        "fulfill_by", pd.Series("", index=revenue_asins.index)
-    ).fillna("").str.strip().str.casefold().eq("fba")
-    normalized_custom = revenue_asins.loc[fba_mask, "custom_by"].map(normalize_person)
-    revenue_asins.loc[
-        fba_mask & normalized_custom.reindex(revenue_asins.index, fill_value="").str.contains(
-            "truong y nhi", regex=False
-        ),
-        "Revenue_Owner",
-    ] = "Nhi-FBA"
-    revenue_asins.loc[
-        fba_mask & normalized_custom.reindex(revenue_asins.index, fill_value="").str.contains(
-            "phuong linh", regex=False
-        ),
-        "Revenue_Owner",
-    ] = "Linh-FBA"
     ads_revenue_milestones = revenue_milestone_counts(
         revenue_asins.rename(columns={"Revenue_Owner": "milestone_owner"}),
         "milestone_owner",
@@ -1358,7 +1360,7 @@ else:
     st.caption(
         "Record ID, ASIN và workflow dùng ngày lịch gốc của Lark, không đổi timezone. "
         "Orders, Units và Revenue dùng Purchase Time của Order Report đã đổi sang "
-        "America/Los_Angeles và đã loại Cancelled."
+        "America/Los_Angeles, đã loại Cancelled và chỉ giữ Fulfill By = FBM cho KPI nhân sự."
     )
     if team_access_granted():
         config, missing_secrets = lark_config()
@@ -1463,7 +1465,7 @@ else:
                 attribution = prepare_attribution(lark, store, performance)
                 ads_snapshot = current_ads_snapshot()
                 ads_summary, ads_imports = select_ads_summary(
-                    ads_snapshot, selected_month, store
+                    ads_snapshot, selected_month, store, fbm_only=True
                 )
                 ads_snapshot_matches = not ads_summary.empty
                 records = attribution["records"]
@@ -1592,22 +1594,23 @@ else:
                         "Revenue ≥ $5,000 / Record ID",
                     )
 
+                    employee_asins = fbm_asin_rows(attribution["attributed_asins"])
                     new_asin_mask = in_lark_calendar_window(
-                        attribution["attributed_asins"]["custom_check_done_date"],
+                        employee_asins["custom_check_done_date"],
                         validation_cohort_start(window_end),
                         window_end,
                     )
-                    product_new_asins = attribution["attributed_asins"].loc[
+                    product_new_asins = employee_asins.loc[
                         new_asin_mask
-                        & attribution["attributed_asins"]["managed_by"]
+                        & employee_asins["managed_by"]
                         .fillna("")
                         .str.strip()
                         .ne(""),
                         "asin",
                     ].nunique()
-                    ads_new_asins = attribution["attributed_asins"].loc[
+                    ads_new_asins = employee_asins.loc[
                         new_asin_mask
-                        & attribution["attributed_asins"]["ads_by"]
+                        & employee_asins["ads_by"]
                         .fillna("")
                         .str.strip()
                         .ne(""),
@@ -1634,7 +1637,8 @@ else:
                         "Idea theo MRND IDEA Pickup Date; Product output và Product Support theo "
                         "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, còn "
                         "Product/Ads New Revenue theo từng ASIN có Custom Check Done từ ngày 20 "
-                        "tháng trước đến cuối time window."
+                        "tháng trước đến cuối time window. Toàn bộ Order và Ads FBA bị loại khỏi "
+                        "các bảng KPI nhân sự."
                     )
                     if ads_snapshot_matches:
                         diagnostics = [item.get("diagnostics", {}) for item in ads_imports]
@@ -1663,8 +1667,8 @@ else:
                             "Ads snapshot đã map 100% SP/SB/SD ASIN → TOTAL ASIN → "
                             f"Ads By cho {imported_stores}. Đã chuyển {support_asins} ASIN / "
                             f"${support_spend:,.2f} Spend / ${support_sales:,.2f} Sales sang "
-                            f"Nhi-Support; {execution_clause}và tách "
-                            f"{fba_asins} ASIN FBA sang Nhi-FBA/Linh-FBA."
+                            f"Nhi-Support; {execution_clause}đồng thời nhận diện và loại "
+                            f"{fba_asins} ASIN FBA khỏi KPI nhân sự."
                         )
                         catalog_fba_asins = set(
                             attribution["total"].loc[
@@ -1699,10 +1703,11 @@ else:
                     with st.expander("Quy định KPI đang áp dụng", expanded=False):
                         st.markdown(
                             """
-- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN thuộc Idea ownership.
-- **Product:** Qualified ASINs là unique ASIN theo Custom Check Done Date; `Listing Cohort` là unique Record ID có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN thuộc Managed By; `New Revenue` chỉ gồm các ASIN có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
+- **Phạm vi fulfillment:** toàn bộ bảng KPI nhân sự chỉ dùng ASIN có `Fulfill By = FBM`; Order, Revenue, Units, ASIN count và Ads Spend/Sales/Orders của FBA đều bị loại. Overview và Ads Performance tổng vẫn giữ FBA + FBM để đối soát store.
+- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID FBM có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units FBM ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN FBM thuộc Idea ownership.
+- **Product:** Qualified ASINs là unique ASIN FBM theo Custom Check Done Date; `Listing Cohort` là unique Record ID FBM có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units FBM ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN FBM thuộc Managed By; `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
-- **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD; SP dùng Advertised ASIN, SB/SD dùng ASIN đầu tiên trong Campaign Name để map ownership mà không nhân đôi campaign total. Mọi campaign có chữ `Support` được chuyển sang `Nhi-Support`; marker có `LINH`, `HIEU`, `HA` (kể cả `LINHAMZ`, `HIEUAMZ`, `HIEUMRND`, `HAMRND`) được chuyển sang các hàng thực thi `Linh`, `Hieu`, `Ha`. Các hàng thực thi không nhận Portfolio Revenue/TACOS. FBA lấy theo `Fulfill By = FBA`, sau đó phân bổ `Nhi-FBA`/`Linh-FBA` theo `Custom By`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
+- **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN FBM thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID FBM có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD rồi loại mọi dòng map tới ASIN FBA trước khi gộp KPI, kể cả campaign `Support` hoặc marker `LINH`/`HIEU`/`HA`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
 - **Revenue milestones:** các cột `Record IDs ≥$1K/≥$3K/≥$5K/≥$10K/≥$15K/≥$20K` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có Revenue trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
                             """
                         )
