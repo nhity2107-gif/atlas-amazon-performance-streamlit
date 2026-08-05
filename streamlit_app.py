@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from ads_data import (
     load_ads_snapshot,
@@ -209,15 +210,58 @@ def daily_frame(store_name: str, month: str | None = None) -> pd.DataFrame:
     stores = list(STORES) if store_name == "All Stores" else [store_name]
     performance = selected_order_performance(stores, month)
     if performance.empty:
-        return pd.DataFrame(columns=["Revenue", "Orders"])
+        return pd.DataFrame(columns=["Date", "Revenue", "Quantity", "Orders"])
     performance = performance.copy()
     performance["Date"] = pd.to_datetime(performance["Date"], errors="coerce")
     performance = performance.dropna(subset=["Date"])
-    performance["Day"] = performance["Date"].dt.day
-    return performance.groupby("Day").agg(
-        Revenue=("Revenue", "sum"),
-        Orders=("Orders", "sum"),
+    return (
+        performance.groupby("Date", as_index=False)
+        .agg(
+            Revenue=("Revenue", "sum"),
+            Quantity=("Units", "sum"),
+            Orders=("Orders", "sum"),
+        )
+        .sort_values("Date")
     )
+
+
+def daily_revenue_quantity_chart(frame: pd.DataFrame) -> go.Figure:
+    figure = make_subplots(specs=[[{"secondary_y": True}]])
+    figure.add_trace(
+        go.Bar(
+            x=frame["Date"],
+            y=frame["Revenue"],
+            name="Revenue",
+            marker_color="#ff7b2c",
+            hovertemplate="%{x|%d/%m/%Y}<br>Revenue: $%{y:,.2f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=frame["Date"],
+            y=frame["Quantity"],
+            name="Quantity",
+            mode="lines+markers",
+            line={"color": "#0ea5a8", "width": 3},
+            marker={"size": 7},
+            hovertemplate="%{x|%d/%m/%Y}<br>Quantity: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    figure.update_xaxes(tickformat="%d/%m", title_text="Ngày")
+    figure.update_yaxes(title_text="Revenue (USD)", tickprefix="$", secondary_y=False)
+    figure.update_yaxes(title_text="Quantity", rangemode="tozero", secondary_y=True)
+    figure.update_layout(
+        height=340,
+        margin={"l": 10, "r": 10, "t": 35, "b": 10},
+        hovermode="x unified",
+        legend={"orientation": "h", "y": 1.12, "x": 0},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        bargap=0.28,
+    )
+    return figure
 
 
 def active_store(store_name: str, month: str | None = None) -> dict:
@@ -1105,8 +1149,32 @@ if page.startswith("01"):
 
     left, right = st.columns([2, 1])
     with left:
-        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">DAILY REVENUE</div><h3>Revenue theo ngày</h3>', unsafe_allow_html=True)
-        st.bar_chart(daily_frame(store, selected_month)["Revenue"], color="#ff7b2c", height=310)
+        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">DAILY PERFORMANCE</div><h3>Revenue & Quantity theo ngày</h3>', unsafe_allow_html=True)
+        daily_performance = daily_frame(store, selected_month)
+        chart_tab, table_tab = st.tabs(["Chart", "Bảng dữ liệu"])
+        with chart_tab:
+            st.plotly_chart(
+                daily_revenue_quantity_chart(daily_performance),
+                width="stretch",
+                config={"displayModeBar": False},
+            )
+        with table_tab:
+            daily_table = daily_performance[["Date", "Revenue", "Quantity"]].copy()
+            st.dataframe(
+                daily_table,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Date": st.column_config.DateColumn("Ngày", format="DD/MM/YYYY"),
+                    "Revenue": st.column_config.NumberColumn(
+                        "Revenue", format="dollar", help="Item Price + Shipping Price"
+                    ),
+                    "Quantity": st.column_config.NumberColumn(
+                        "Quantity", format="%d", help="Tổng Units theo Purchase Date"
+                    ),
+                },
+            )
+            st.caption("Quantity = tổng Units trong Order Report theo Purchase Date.")
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         store_share = (
