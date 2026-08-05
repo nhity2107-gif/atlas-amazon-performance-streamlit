@@ -732,10 +732,11 @@ def employee_kpi_tables(
     def owner_records(column: str) -> pd.DataFrame:
         return records[records[column].fillna("").str.strip().ne("")].copy()
 
+    # Every MRND IDEA record is an FBM idea by business definition. Do not
+    # require it to exist in TOTAL ASIN yet: newly qualified ideas often have
+    # no ASIN at the time they are handed over. Revenue and Units remain zero
+    # until the Record ID can be mapped to FBM ASINs below.
     idea_events = attribution.get("ideas", pd.DataFrame()).copy()
-    idea_events = idea_events.loc[
-        idea_events["record_id"].astype(str).isin(fbm_record_ids)
-    ].copy()
     idea_events["qualified"] = in_lark_calendar_window(
         idea_events["handover_date"], window_start, window_end
     )

@@ -100,6 +100,9 @@ của dòng ASIN sau khi lọc ngày.
 
 - **Qualified Ideas:** số unique Record ID trong MRND IDEA có ít nhất một
   `Date Pickup` trong tháng.
+- Toàn bộ MRND IDEA được xem là FBM theo quy ước nghiệp vụ. Qualified Ideas và
+  Pickup Cohort không yêu cầu Record ID đã xuất hiện trong TOTAL ASIN; chỉ các
+  chỉ số Revenue/Units mới cần mapping ASIN FBM.
 - **Listing Done:** số record TOTAL ASINs có `Listing Done Date` trong tháng.
 - **Custom Check Done:** số record TOTAL ASINs có `Custom Check Done Date` trong
   tháng.
