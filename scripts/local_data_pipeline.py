@@ -281,6 +281,7 @@ def export_snapshot(
     output_path: Path,
     period_start: str | None = None,
     period_end: str | None = None,
+    as_of_date: str | None = None,
 ) -> dict[str, object]:
     if bool(period_start) != bool(period_end):
         raise ValueError("start và end phải được truyền cùng nhau khi giới hạn snapshot.")
@@ -337,6 +338,7 @@ def export_snapshot(
         output_path,
         summary,
         source_updated_at=source_updated_at,
+        report_as_of_date=as_of_date,
     )
     return {
         "rows": len(summary),
@@ -347,6 +349,7 @@ def export_snapshot(
             else f"{summary['Date'].min()} to {summary['Date'].max()}"
         ),
         "source_updated_at": source_updated_at,
+        "report_as_of_date": as_of_date or "",
         "output": str(output_path),
     }
 
@@ -379,6 +382,10 @@ def parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--output", type=Path, required=True)
     export_parser.add_argument("--start")
     export_parser.add_argument("--end")
+    export_parser.add_argument(
+        "--as-of-date",
+        help="Ngày input cuối của report MTD, dùng làm mốc KPI workflow (YYYY-MM-DD)",
+    )
     return root
 
 
@@ -400,7 +407,7 @@ def main() -> None:
             )
         )
     elif args.command == "export-snapshot":
-        print(export_snapshot(args.db, args.output, args.start, args.end))
+        print(export_snapshot(args.db, args.output, args.start, args.end, args.as_of_date))
 
 
 if __name__ == "__main__":

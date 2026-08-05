@@ -34,7 +34,12 @@ from snapshot_store import (
     load_snapshot,
     load_snapshot_metadata,
 )
-from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue, fbm_asin_rows
+from team_kpi import (
+    asin_new_revenue_from_custom_cohort,
+    asin_portfolio_revenue,
+    fbm_asin_rows,
+    workflow_kpi_window_end,
+)
 
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
@@ -1415,11 +1420,15 @@ else:
             report_start = performance["Date"].min().normalize()
             report_end = performance["Date"].max().normalize()
             window_start = pd.Timestamp(f"{selected_month}-01")
-            window_end = report_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            window_end = workflow_kpi_window_end(
+                selected_month,
+                order_snapshot_metadata,
+                report_end,
+            )
             st.success(
                 f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
-                f"Purchase Date Los Angeles hiện có {report_start:%d/%m/%Y}–"
-                f"{report_end:%d/%m/%Y}."
+                        f"Purchase Date Los Angeles hiện có {report_start:%d/%m/%Y}–"
+                        f"{report_end:%d/%m/%Y}; KPI workflow tính đến {window_end:%d/%m/%Y}."
             )
             refresh_lark = st.button(
                 "Cập nhật snapshot Lark · tất cả bảng",

@@ -14,7 +14,8 @@ from ads_data import (
     save_encrypted_ads_snapshot,
     upsert_ads_snapshot,
 )
-from lark_snapshot_store import load_lark_snapshot
+from lark_data import LarkConfig, fetch_lark_frames
+from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
 
 
@@ -68,6 +69,40 @@ def run_git(*args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         encoding="utf-8",
     )
+
+
+def refresh_lark_for_update() -> tuple[dict, str, bool]:
+    secret_names = {
+        "app_id": "LARK_APP_ID",
+        "app_secret": "LARK_APP_SECRET",
+        "base_token": "LARK_BASE_TOKEN",
+        "total_asin_table_id": "LARK_TOTAL_ASIN_TABLE_ID",
+        "mrnd_idea_table_id": "LARK_MRND_IDEA_TABLE_ID",
+        "cliparts_table_id": "LARK_CLIPARTS_TABLE_ID",
+    }
+    values = {
+        field: str(st.secrets.get(secret_name, "")).strip()
+        for field, secret_name in secret_names.items()
+    }
+    missing = [secret_names[field] for field, value in values.items() if not value]
+    existing = load_lark_snapshot(LARK_SNAPSHOT)
+    if missing:
+        if existing is None:
+            raise ValueError("Thiếu Streamlit Secrets: " + ", ".join(missing))
+        return existing, "Không refresh được Lark vì thiếu secrets; đang dùng snapshot cũ.", False
+    try:
+        live = fetch_lark_frames(LarkConfig(**values))
+        save_lark_snapshot(LARK_SNAPSHOT, live)
+        counts = live["record_counts"]
+        status = (
+            f"Lark live: TOTAL ASIN {counts['TOTAL ASIN']:,} · "
+            f"MRND IDEA {counts['MRND IDEA']:,} · CLIPARTS {counts['CLIPARTS']:,}"
+        )
+        return live, status, True
+    except Exception as exc:
+        if existing is None:
+            raise
+        return existing, f"Refresh Lark lỗi ({exc}); đang dùng snapshot cũ.", False
 
 
 st.set_page_config(page_title="Atlas Local Update Tool", page_icon="🟧", layout="wide")
@@ -164,11 +199,10 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "Wrappiness": validate_order_window(files["wr_order"], "Wrappiness", month, as_of),
                 "Pawsionate": validate_order_window(files["paw_order"], "Pawsionate", month, as_of),
             }
+            with st.spinner("Đang refresh snapshot Lark trước khi sinh KPI…"):
+                lark, lark_status, lark_refreshed = refresh_lark_for_update()
             ads_spend = ads_sales = None
             if include_ads:
-                lark = load_lark_snapshot(LARK_SNAPSHOT)
-                if lark is None:
-                    raise ValueError("Chưa có Lark snapshot để map Ads ownership.")
                 wr_reports = [
                     read_ads_workbook(files["wr_sp"], "SP"),
                     read_ads_workbook(files["wr_sb"], "SB"),
@@ -194,7 +228,11 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                     DATABASE, files["paw_order"], "Pawsionate", "mtd", as_of_date=as_of.isoformat()
                 ),
             ]
-            order_snapshot_result = export_snapshot(DATABASE, ORDER_SNAPSHOT)
+            order_snapshot_result = export_snapshot(
+                DATABASE,
+                ORDER_SNAPSHOT,
+                as_of_date=as_of.isoformat(),
+            )
             if include_ads:
                 common_metadata = {
                     "month": month,
@@ -221,11 +259,17 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "order_checks": order_checks,
                 "order_results": order_results,
                 "order_snapshot": order_snapshot_result,
+                "lark_status": lark_status,
+                "lark_refreshed": lark_refreshed,
                 "ads_updated": include_ads,
                 "ads_spend": ads_spend,
                 "ads_sales": ads_sales,
             }
             st.success("Đã kiểm tra và sinh snapshot dashboard thành công.")
+            if lark_refreshed:
+                st.success(lark_status)
+            else:
+                st.warning(lark_status)
             zero_order_stores = [
                 store for store, check in order_checks.items() if check["rows"] == 0
             ]
@@ -251,6 +295,7 @@ if "last_build" in st.session_state:
         for store, check in build["order_checks"].items()
     )
     st.caption(f"Order reports · {order_status}")
+    st.caption(build.get("lark_status", ""))
     st.caption(f"Raw reports: {build['raw_root']}")
 
     st.markdown("### Publish lên Streamlit")

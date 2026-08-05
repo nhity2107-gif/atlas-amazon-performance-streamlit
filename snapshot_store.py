@@ -79,6 +79,7 @@ def save_snapshot(
     frame: pd.DataFrame,
     *,
     source_updated_at: str | None = None,
+    report_as_of_date: str | None = None,
 ) -> None:
     normalized = normalize_snapshot(frame)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +91,7 @@ def save_snapshot(
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "source_updated_at": source_updated_at or "",
+        "report_as_of_date": report_as_of_date or "",
         "timezone": "America/Los_Angeles",
         "date_min": dates.min().date().isoformat() if not dates.empty else "",
         "date_max": dates.max().date().isoformat() if not dates.empty else "",

@@ -4,10 +4,31 @@ import unittest
 
 import pandas as pd
 
-from team_kpi import asin_new_revenue_from_custom_cohort, asin_portfolio_revenue, fbm_asin_rows
+from team_kpi import (
+    asin_new_revenue_from_custom_cohort,
+    asin_portfolio_revenue,
+    fbm_asin_rows,
+    workflow_kpi_window_end,
+)
 
 
 class TeamKpiTests(unittest.TestCase):
+    def test_workflow_window_uses_mtd_input_date_not_last_order_date(self) -> None:
+        result = workflow_kpi_window_end(
+            "2026-08",
+            {"report_as_of_date": "2026-08-05"},
+            pd.Timestamp("2026-08-03"),
+        )
+        self.assertEqual(result, pd.Timestamp("2026-08-05 23:59:59"))
+
+    def test_historical_workflow_window_uses_month_end(self) -> None:
+        result = workflow_kpi_window_end(
+            "2026-07",
+            {"report_as_of_date": "2026-08-05"},
+            pd.Timestamp("2026-07-30"),
+        )
+        self.assertEqual(result, pd.Timestamp("2026-07-31 23:59:59"))
+
     def test_fbm_asin_rows_excludes_fba_and_unmapped(self) -> None:
         attributed = pd.DataFrame(
             [

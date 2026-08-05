@@ -283,11 +283,15 @@ class LocalPipelineTests(unittest.TestCase):
             )
             ingest_order_report(database, report, "Wrappiness", "daily")
 
-            result = export_snapshot(database, snapshot)
+            result = export_snapshot(database, snapshot, as_of_date="2026-08-05")
             frame = load_snapshot(snapshot)
 
             self.assertEqual(set(frame["Date"]), {"2026-07-31", "2026-08-01"})
             self.assertEqual(result["period"], "2026-07-31 to 2026-08-01")
+            self.assertEqual(result["report_as_of_date"], "2026-08-05")
+            self.assertEqual(
+                load_snapshot_metadata(snapshot)["report_as_of_date"], "2026-08-05"
+            )
 
 
 if __name__ == "__main__":

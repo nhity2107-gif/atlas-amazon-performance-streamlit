@@ -13,6 +13,30 @@ def fbm_asin_rows(attributed_asins: pd.DataFrame) -> pd.DataFrame:
     return attributed_asins.loc[fulfillment.eq("fbm")].copy()
 
 
+def workflow_kpi_window_end(
+    selected_month: str,
+    order_snapshot_metadata: dict,
+    order_report_end: pd.Timestamp,
+) -> pd.Timestamp:
+    """Use the MTD input date for workflow KPI, independent of last sold order."""
+    fallback = pd.Timestamp(order_report_end).normalize()
+    as_of = pd.to_datetime(
+        order_snapshot_metadata.get("report_as_of_date"), errors="coerce"
+    )
+    if pd.isna(as_of):
+        selected_end = fallback
+    else:
+        as_of = pd.Timestamp(as_of).normalize()
+        as_of_month = as_of.strftime("%Y-%m")
+        if selected_month == as_of_month:
+            selected_end = as_of
+        elif selected_month < as_of_month:
+            selected_end = pd.Timestamp(f"{selected_month}-01") + pd.offsets.MonthEnd(0)
+        else:
+            selected_end = fallback
+    return selected_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+
 def asin_portfolio_revenue(
     attributed_asins: pd.DataFrame,
     owner_column: str,

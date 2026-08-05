@@ -48,7 +48,7 @@ Import-MtdOrder -Store "Wrappiness" -Report $WrappinessOrder
 Import-MtdOrder -Store "Pawsionate" -Report $PawsionateOrder
 
 if ($WrappinessOrder -or $PawsionateOrder) {
-    python $orderPipeline export-snapshot --db $database --output $orderSnapshot
+    python $orderPipeline export-snapshot --db $database --output $orderSnapshot --as-of-date $AsOfDate
     if ($LASTEXITCODE -ne 0) { throw "Không thể xuất Order snapshot tổng hợp." }
 }
 
