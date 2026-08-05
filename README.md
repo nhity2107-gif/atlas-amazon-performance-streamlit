@@ -4,15 +4,23 @@ Streamlit dashboard for live month-to-date Amazon order, Ads and employee KPI re
 
 ## Daily month-to-date update
 
-Each daily Amazon export must cover the first day of the selected month through
-the input date. Run one command after downloading the reports:
+Each daily Order export must cover the first day of the selected month through
+the input date. Daily updates require only the two Order reports:
 
 ```powershell
 & "D:\Atlas Amazon Performance\dashboard\scripts\update_month_to_date.ps1" `
   -Month 2026-08 `
   -AsOfDate 2026-08-04 `
   -WrappinessOrder "D:\reports\wrappiness-orders.txt" `
-  -PawsionateOrder "D:\reports\pawsionate-orders.txt" `
+  -PawsionateOrder "D:\reports\pawsionate-orders.txt"
+```
+
+Ads are imported once at month end with all six reports:
+
+```powershell
+& "D:\Atlas Amazon Performance\dashboard\scripts\update_month_to_date.ps1" `
+  -Month 2026-08 `
+  -AsOfDate 2026-08-31 `
   -WrappinessSP "D:\reports\wrappiness-sp.xlsx" `
   -WrappinessSB "D:\reports\wrappiness-sb.xlsx" `
   -WrappinessSD "D:\reports\wrappiness-sd.xlsx" `
@@ -39,8 +47,10 @@ Run the PC-only uploader on `http://127.0.0.1:8502`:
 & "D:\Atlas Amazon Performance\dashboard\scripts\run_update_tool.ps1"
 ```
 
-The tool accepts all eight MTD files, validates Order date coverage and Ads/Lark
-mapping, updates the local snapshots, runs tests, then publishes only the
+The tool defaults to daily mode with only two Order MTD files. Enable
+`Import 6 Ads report cuối tháng` only on the final Ads import; the tool then
+requires SP/SB/SD for both stores. It validates inputs, updates the relevant
+snapshots, runs tests, then publishes only the
 aggregate Order snapshot plus an encrypted Ads snapshot. Because the GitHub
 repository is public, initialize a Fernet key once:
 

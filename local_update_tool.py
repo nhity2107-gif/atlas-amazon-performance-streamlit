@@ -94,28 +94,42 @@ paw_order = order_cols[1].file_uploader(
     "Pawsionate Order", type=["txt", "tsv", "csv"], key="paw_order"
 )
 
-st.markdown("### Ads Report · từ ngày 01 đến ngày input")
-st.caption("Wrappiness · đủ SP, SB và SD")
-wr_ads_cols = st.columns(3)
-wr_sp = wr_ads_cols[0].file_uploader("Wrappiness SP", type=["xlsx", "csv"], key="wr_sp")
-wr_sb = wr_ads_cols[1].file_uploader("Wrappiness SB", type=["xlsx"], key="wr_sb")
-wr_sd = wr_ads_cols[2].file_uploader("Wrappiness SD", type=["xlsx"], key="wr_sd")
-st.caption("Pawsionate · đủ SP, SB và SD")
-paw_ads_cols = st.columns(3)
-paw_sp = paw_ads_cols[0].file_uploader("Pawsionate SP", type=["xlsx", "csv"], key="paw_sp")
-paw_sb = paw_ads_cols[1].file_uploader("Pawsionate SB", type=["xlsx"], key="paw_sb")
-paw_sd = paw_ads_cols[2].file_uploader("Pawsionate SD", type=["xlsx"], key="paw_sd")
+include_ads = st.checkbox(
+    "Import 6 Ads report cuối tháng",
+    value=False,
+    help="Để tắt khi cập nhật Order MTD hằng ngày. Chỉ bật sau khi đã tải đủ SP/SB/SD của cả hai store.",
+)
+wr_sp = wr_sb = wr_sd = paw_sp = paw_sb = paw_sd = None
+if include_ads:
+    st.markdown("### Ads Report cuối tháng · từ ngày 01 đến ngày cuối tháng")
+    st.caption("Wrappiness · đủ SP, SB và SD")
+    wr_ads_cols = st.columns(3)
+    wr_sp = wr_ads_cols[0].file_uploader("Wrappiness SP", type=["xlsx", "csv"], key="wr_sp")
+    wr_sb = wr_ads_cols[1].file_uploader("Wrappiness SB", type=["xlsx"], key="wr_sb")
+    wr_sd = wr_ads_cols[2].file_uploader("Wrappiness SD", type=["xlsx"], key="wr_sd")
+    st.caption("Pawsionate · đủ SP, SB và SD")
+    paw_ads_cols = st.columns(3)
+    paw_sp = paw_ads_cols[0].file_uploader("Pawsionate SP", type=["xlsx", "csv"], key="paw_sp")
+    paw_sb = paw_ads_cols[1].file_uploader("Pawsionate SB", type=["xlsx"], key="paw_sb")
+    paw_sd = paw_ads_cols[2].file_uploader("Pawsionate SD", type=["xlsx"], key="paw_sd")
+else:
+    st.info("Chế độ hằng ngày: chỉ cập nhật 2 Order MTD; Ads snapshot hiện tại được giữ nguyên.")
 
 required_uploads = {
     "Wrappiness Order": wr_order,
     "Pawsionate Order": paw_order,
-    "Wrappiness SP": wr_sp,
-    "Wrappiness SB": wr_sb,
-    "Wrappiness SD": wr_sd,
-    "Pawsionate SP": paw_sp,
-    "Pawsionate SB": paw_sb,
-    "Pawsionate SD": paw_sd,
 }
+if include_ads:
+    required_uploads.update(
+        {
+            "Wrappiness SP": wr_sp,
+            "Wrappiness SB": wr_sb,
+            "Wrappiness SD": wr_sd,
+            "Pawsionate SP": paw_sp,
+            "Pawsionate SB": paw_sb,
+            "Pawsionate SD": paw_sd,
+        }
+    )
 
 if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container_width=True):
     missing = [name for name, upload in required_uploads.items() if upload is None]
@@ -133,49 +147,44 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                     paw_order,
                     raw_root / "Pawsionate" / "Order" / f"pawsionate-orders-mtd{Path(paw_order.name).suffix}",
                 ),
-                "wr_sp": save_upload(
-                    wr_sp, raw_root / "Wrappiness" / "Ads" / f"wrappiness-sp-mtd{Path(wr_sp.name).suffix}"
-                ),
-                "wr_sb": save_upload(
-                    wr_sb, raw_root / "Wrappiness" / "Ads" / f"wrappiness-sb-mtd{Path(wr_sb.name).suffix}"
-                ),
-                "wr_sd": save_upload(
-                    wr_sd, raw_root / "Wrappiness" / "Ads" / f"wrappiness-sd-mtd{Path(wr_sd.name).suffix}"
-                ),
-                "paw_sp": save_upload(
-                    paw_sp, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sp-mtd{Path(paw_sp.name).suffix}"
-                ),
-                "paw_sb": save_upload(
-                    paw_sb, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sb-mtd{Path(paw_sb.name).suffix}"
-                ),
-                "paw_sd": save_upload(
-                    paw_sd, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sd-mtd{Path(paw_sd.name).suffix}"
-                ),
             }
+            if include_ads:
+                files.update(
+                    {
+                        "wr_sp": save_upload(wr_sp, raw_root / "Wrappiness" / "Ads" / f"wrappiness-sp-mtd{Path(wr_sp.name).suffix}"),
+                        "wr_sb": save_upload(wr_sb, raw_root / "Wrappiness" / "Ads" / f"wrappiness-sb-mtd{Path(wr_sb.name).suffix}"),
+                        "wr_sd": save_upload(wr_sd, raw_root / "Wrappiness" / "Ads" / f"wrappiness-sd-mtd{Path(wr_sd.name).suffix}"),
+                        "paw_sp": save_upload(paw_sp, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sp-mtd{Path(paw_sp.name).suffix}"),
+                        "paw_sb": save_upload(paw_sb, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sb-mtd{Path(paw_sb.name).suffix}"),
+                        "paw_sd": save_upload(paw_sd, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sd-mtd{Path(paw_sd.name).suffix}"),
+                    }
+                )
 
             order_checks = {
                 "Wrappiness": validate_order_window(files["wr_order"], "Wrappiness", month, as_of),
                 "Pawsionate": validate_order_window(files["paw_order"], "Pawsionate", month, as_of),
             }
-            lark = load_lark_snapshot(LARK_SNAPSHOT)
-            if lark is None:
-                raise ValueError("Chưa có Lark snapshot để map Ads ownership.")
-            wr_reports = [
-                read_ads_workbook(files["wr_sp"], "SP"),
-                read_ads_workbook(files["wr_sb"], "SB"),
-                read_ads_workbook(files["wr_sd"], "SD"),
-            ]
-            paw_reports = [
-                read_ads_workbook(files["paw_sp"], "SP"),
-                read_ads_workbook(files["paw_sb"], "SB"),
-                read_ads_workbook(files["paw_sd"], "SD"),
-            ]
-            wr_summary, wr_diagnostics = build_ads_employee_summary_from_reports(
-                wr_reports, lark["total"]
-            )
-            paw_summary, paw_diagnostics = build_ads_employee_summary_from_reports(
-                paw_reports, lark["total"]
-            )
+            ads_spend = ads_sales = None
+            if include_ads:
+                lark = load_lark_snapshot(LARK_SNAPSHOT)
+                if lark is None:
+                    raise ValueError("Chưa có Lark snapshot để map Ads ownership.")
+                wr_reports = [
+                    read_ads_workbook(files["wr_sp"], "SP"),
+                    read_ads_workbook(files["wr_sb"], "SB"),
+                    read_ads_workbook(files["wr_sd"], "SD"),
+                ]
+                paw_reports = [
+                    read_ads_workbook(files["paw_sp"], "SP"),
+                    read_ads_workbook(files["paw_sb"], "SB"),
+                    read_ads_workbook(files["paw_sd"], "SD"),
+                ]
+                wr_summary, wr_diagnostics = build_ads_employee_summary_from_reports(
+                    wr_reports, lark["total"]
+                )
+                paw_summary, paw_diagnostics = build_ads_employee_summary_from_reports(
+                    paw_reports, lark["total"]
+                )
 
             order_results = [
                 ingest_order_report(
@@ -186,33 +195,25 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 ),
             ]
             order_snapshot_result = export_snapshot(DATABASE, ORDER_SNAPSHOT)
-            common_metadata = {
-                "month": month,
-                "report_scope": "mtd",
-                "period_start": f"{month}-01",
-                "period_end": as_of.isoformat(),
-                "imported_at": datetime.now(timezone.utc).isoformat(),
-            }
-            upsert_ads_snapshot(
-                ADS_SNAPSHOT,
-                wr_summary,
-                {
-                    **common_metadata,
-                    "store": "Wrappiness",
-                    "mapping_mode": "complete-sp-sb-sd",
-                    "diagnostics": wr_diagnostics,
-                },
-            )
-            upsert_ads_snapshot(
-                ADS_SNAPSHOT,
-                paw_summary,
-                {
-                    **common_metadata,
-                    "store": "Pawsionate",
-                    "mapping_mode": "complete-sp-sb-sd",
-                    "diagnostics": paw_diagnostics,
-                },
-            )
+            if include_ads:
+                common_metadata = {
+                    "month": month,
+                    "report_scope": "monthly-final",
+                    "period_start": f"{month}-01",
+                    "period_end": as_of.isoformat(),
+                    "imported_at": datetime.now(timezone.utc).isoformat(),
+                }
+                for store_name, summary, diagnostics in (
+                    ("Wrappiness", wr_summary, wr_diagnostics),
+                    ("Pawsionate", paw_summary, paw_diagnostics),
+                ):
+                    upsert_ads_snapshot(
+                        ADS_SNAPSHOT,
+                        summary,
+                        {**common_metadata, "store": store_name, "mapping_mode": "complete-sp-sb-sd", "diagnostics": diagnostics},
+                    )
+                ads_spend = round(float(wr_summary["Ads_Spend"].sum() + paw_summary["Ads_Spend"].sum()), 2)
+                ads_sales = round(float(wr_summary["Ads_Sales"].sum() + paw_summary["Ads_Sales"].sum()), 2)
             st.session_state["last_build"] = {
                 "month": month,
                 "as_of": as_of.isoformat(),
@@ -220,8 +221,9 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "order_checks": order_checks,
                 "order_results": order_results,
                 "order_snapshot": order_snapshot_result,
-                "ads_spend": round(float(wr_summary["Ads_Spend"].sum() + paw_summary["Ads_Spend"].sum()), 2),
-                "ads_sales": round(float(wr_summary["Ads_Sales"].sum() + paw_summary["Ads_Sales"].sum()), 2),
+                "ads_updated": include_ads,
+                "ads_spend": ads_spend,
+                "ads_sales": ads_sales,
             }
             st.success("Đã kiểm tra và sinh snapshot dashboard thành công.")
             zero_order_stores = [
@@ -241,8 +243,8 @@ if "last_build" in st.session_state:
     metrics = st.columns(4)
     metrics[0].metric("Order snapshot rows", f"{build['order_snapshot']['rows']:,}")
     metrics[1].metric("Order revenue", f"${build['order_snapshot']['revenue']:,.2f}")
-    metrics[2].metric("Ads spend", f"${build['ads_spend']:,.2f}")
-    metrics[3].metric("Ads sales", f"${build['ads_sales']:,.2f}")
+    metrics[2].metric("Ads spend", f"${build['ads_spend']:,.2f}" if build["ads_updated"] else "Không cập nhật")
+    metrics[3].metric("Ads sales", f"${build['ads_sales']:,.2f}" if build["ads_updated"] else "Không cập nhật")
     order_status = ", ".join(
         f"{store}: {check['rows']:,} dòng"
         + (" (0 order hợp lệ)" if check["rows"] == 0 else "")
@@ -252,19 +254,25 @@ if "last_build" in st.session_state:
     st.caption(f"Raw reports: {build['raw_root']}")
 
     st.markdown("### Publish lên Streamlit")
-    st.warning(
-        "Repository GitHub là public. Ads snapshot sẽ được mã hóa trước khi commit; "
-        "không publish raw report, database, Lark snapshot hoặc Ads plaintext."
-    )
-    if st.button("2 · Mã hóa, kiểm thử và push", use_container_width=True):
+    if build["ads_updated"]:
+        st.warning(
+            "Repository GitHub là public. Ads snapshot sẽ được mã hóa trước khi commit; "
+            "không publish raw report, database, Lark snapshot hoặc Ads plaintext."
+        )
+        publish_label = "2 · Mã hóa Ads, kiểm thử và push"
+    else:
+        st.info("Lần cập nhật này chỉ publish Order snapshot; Ads snapshot không thay đổi.")
+        publish_label = "2 · Kiểm thử và push Order"
+    if st.button(publish_label, use_container_width=True):
         try:
-            publish_key = str(st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")).strip()
-            if not publish_key:
-                raise ValueError(
-                    "Thiếu PUBLISHED_SNAPSHOT_KEY. Chạy scripts/setup_publish_key.py và "
-                    "thêm cùng key vào Streamlit Cloud Secrets trước khi publish."
-                )
-            save_encrypted_ads_snapshot(ADS_SNAPSHOT, PUBLISHED_ADS, publish_key)
+            if build["ads_updated"]:
+                publish_key = str(st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")).strip()
+                if not publish_key:
+                    raise ValueError(
+                        "Thiếu PUBLISHED_SNAPSHOT_KEY. Chạy scripts/setup_publish_key.py và "
+                        "thêm cùng key vào Streamlit Cloud Secrets trước khi publish."
+                    )
+                save_encrypted_ads_snapshot(ADS_SNAPSHOT, PUBLISHED_ADS, publish_key)
             tests = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"],
                 cwd=DASHBOARD_ROOT,
@@ -274,12 +282,13 @@ if "last_build" in st.session_state:
                 encoding="utf-8",
             )
             run_git("diff", "--check")
-            run_git(
-                "add",
+            publish_files = [
                 "snapshot/dashboard_snapshot.csv",
                 "snapshot/dashboard_snapshot.metadata.json",
-                "snapshot/published_ads_snapshot.enc",
-            )
+            ]
+            if build["ads_updated"]:
+                publish_files.append("snapshot/published_ads_snapshot.enc")
+            run_git("add", *publish_files)
             staged = run_git("diff", "--cached", "--name-only").stdout.strip()
             if not staged:
                 st.info("Snapshot không thay đổi; không cần push.")
