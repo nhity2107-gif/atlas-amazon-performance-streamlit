@@ -54,6 +54,12 @@ Run the PC-only uploader on `http://127.0.0.1:8502`:
 & "D:\Atlas Amazon Performance\dashboard\scripts\run_update_tool.ps1"
 ```
 
+For a PC that should keep the uploader available, run
+`scripts/watch_update_tool.ps1` in the background and add it to the current
+Windows user's Startup folder. The watchdog checks the local service every 60
+seconds and restarts it when port 8502 is unavailable. The Startup shortcut on
+the configured PC is named `Atlas Amazon Import Tool`.
+
 The tool defaults to daily mode with only two Order MTD files. Enable
 `Import 6 Ads report cuối tháng` only on the final Ads import; the tool then
 requires SP/SB/SD for both stores. It validates inputs, updates the relevant
