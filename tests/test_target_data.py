@@ -5,14 +5,15 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from openpyxl import Workbook
 import pandas as pd
 
 from target_data import (
     TARGET_SHEET,
-    TARGET_SOURCE_COLUMN,
     TargetError,
+    daily_targets_for_month,
     load_fbm_target_snapshot,
-    normalize_fbm_target,
+    normalize_fbm_daily_target,
     read_fbm_target_workbook,
     save_fbm_target_snapshot,
     target_for_month,
@@ -20,21 +21,44 @@ from target_data import (
 )
 
 
+def write_forecast_workbook(path: Path) -> None:
+    workbook = Workbook()
+    output = workbook.active
+    output.title = "Output Plan"
+    output.append(["Date", "DAILY REV 2025", "FORECAST 2026"])
+    output.append(["wrong", 999, 999])
+    sheet = workbook.create_sheet(TARGET_SHEET)
+    sheet.append(["Date", "DAILY REV 2025", "FORECAST 2026"])
+    dates = pd.date_range("2026-01-01", "2026-12-31", freq="D")
+    for index, current_date in enumerate(dates, start=2):
+        forecast = 100 if index == 2 else f"=C{index - 1}"
+        sheet.append([current_date.to_pydatetime(), 50, forecast])
+    workbook.save(path)
+
+
 class TargetDataTests(unittest.TestCase):
-    def test_normalize_uses_monthly_forecast_and_ignores_separator_rows(self) -> None:
-        source = pd.DataFrame(
-            {
-                "Month": [1, 7, "H1", "H2", 12],
-                TARGET_SOURCE_COLUMN: [140000, 320000, 900000, 800000, 1500000],
-            }
-        )
-        result = normalize_fbm_target(source)
-        self.assertEqual(result["Month"].tolist(), ["2026-01", "2026-07", "2026-12"])
-        self.assertEqual(target_for_month(result, "2026-07"), 320000.0)
+    def test_workbook_reads_only_daily_columns_from_named_sheet(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forecast.xlsx"
+            write_forecast_workbook(path)
+            result = read_fbm_target_workbook(path)
+        self.assertEqual(len(result), 365)
+        self.assertEqual(result.iloc[0].to_dict(), {
+            "Date": "2026-01-01",
+            "Revenue 2025": 50.0,
+            "Forecast 2026": 100.0,
+        })
+        self.assertEqual(target_for_month(result, "2026-08"), 3100.0)
 
     def test_snapshot_round_trip(self) -> None:
-        source = normalize_fbm_target(
-            pd.DataFrame({"Month": [7], TARGET_SOURCE_COLUMN: [320000]})
+        source = normalize_fbm_daily_target(
+            pd.DataFrame(
+                {
+                    "Date": ["2026-08-01", "2026-08-02"],
+                    "Revenue 2025": [50, 60],
+                    "Forecast 2026": [100, 120],
+                }
+            )
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "fbm_target.csv"
@@ -42,33 +66,38 @@ class TargetDataTests(unittest.TestCase):
             result = load_fbm_target_snapshot(path)
         pd.testing.assert_frame_equal(result, source)
 
-    def test_workbook_reads_only_the_named_forecast_sheet(self) -> None:
+    def test_daily_progress_compares_actual_to_forecast_and_prior_year(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "forecast.xlsx"
-            with pd.ExcelWriter(path, engine="openpyxl") as writer:
-                pd.DataFrame(
-                    {"Month": [7], TARGET_SOURCE_COLUMN: [999999]}
-                ).to_excel(writer, sheet_name="Output Plan", index=False)
-                pd.DataFrame(
-                    {"Month": [7], TARGET_SOURCE_COLUMN: [320000]}
-                ).to_excel(writer, sheet_name=TARGET_SHEET, index=False)
-            result = read_fbm_target_workbook(path)
-        self.assertEqual(target_for_month(result, "2026-07"), 320000.0)
-
-    def test_prorates_current_month_by_report_as_of_date(self) -> None:
-        result = target_progress("2026-08", 300000, 160000, date(2026, 8, 16))
+            write_forecast_workbook(path)
+            frame = read_fbm_target_workbook(path)
+        result = target_progress(frame, "2026-08", 1200, date(2026, 8, 16))
         self.assertEqual(result["elapsed_days"], 16)
-        self.assertAlmostEqual(result["target_mtd"], 300000 * 16 / 31)
-        self.assertAlmostEqual(result["gap"], 160000 - 300000 * 16 / 31)
+        self.assertEqual(result["forecast_mtd"], 1600)
+        self.assertEqual(result["prior_mtd"], 800)
+        self.assertAlmostEqual(result["vs_forecast"], -0.25)
+        self.assertAlmostEqual(result["vs_2025"], 0.5)
+        self.assertEqual(result["forecast_full_month"], 3100)
 
-    def test_completed_month_uses_full_target(self) -> None:
-        result = target_progress("2026-07", 320000, 181763, date(2026, 8, 16))
+    def test_completed_month_uses_every_daily_value(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "forecast.xlsx"
+            write_forecast_workbook(path)
+            frame = read_fbm_target_workbook(path)
+        result = target_progress(frame, "2026-07", 2000, date(2026, 8, 16))
         self.assertEqual(result["elapsed_days"], 31)
-        self.assertEqual(result["target_mtd"], 320000)
+        self.assertEqual(result["forecast_mtd"], 3100)
+        self.assertEqual(len(daily_targets_for_month(frame, "2026-07")), 31)
 
-    def test_rejects_missing_source_column(self) -> None:
-        with self.assertRaises(TargetError):
-            normalize_fbm_target(pd.DataFrame({"Month": [7], "Other": [1]}))
+    def test_rejects_wrong_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "wrong.xlsx"
+            workbook = Workbook()
+            workbook.active.title = TARGET_SHEET
+            workbook.active.append(["Month", "Other", "Forecast"])
+            workbook.save(path)
+            with self.assertRaises(TargetError):
+                read_fbm_target_workbook(path)
 
 
 if __name__ == "__main__":

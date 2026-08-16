@@ -1,9 +1,15 @@
 {
-  "schema_version": "fbm-target-v1",
-  "updated_at": "2026-08-16T03:47:44.211728+00:00",
+  "schema_version": "fbm-daily-target-v2",
+  "updated_at": "2026-08-16T04:10:29.232969+00:00",
   "source_name": "AMZ - Revenue Forecast Q1&2 - 2026.xlsx",
   "source_sheet": "Revenue Forecast Q1&2 - 2026",
-  "source_column": "2026 Forecast Rev Monthly",
+  "source_columns": [
+    "Date",
+    "DAILY REV 2025",
+    "FORECAST 2026"
+  ],
   "scope": "All Stores · FBM",
-  "rows": 12
+  "date_min": "2026-01-01",
+  "date_max": "2026-12-31",
+  "rows": 365
 }

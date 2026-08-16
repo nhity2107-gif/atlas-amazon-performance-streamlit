@@ -23,7 +23,12 @@ from product_data import (
     top_record_id_frame,
 )
 from snapshot_store import load_snapshot, load_snapshot_metadata
-from target_data import load_fbm_target_snapshot, target_for_month, target_progress
+from target_data import (
+    daily_targets_for_month,
+    load_fbm_target_snapshot,
+    target_for_month,
+    target_progress,
+)
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -196,11 +201,48 @@ def export(month: str, output: Path) -> None:
             if "FBM" in fulfillment_index.index
             else 0.0
         )
-        progress = target_progress(month, monthly_fbm_target, fbm_actual, report_as_of)
+        progress = target_progress(target_frame, month, fbm_actual, report_as_of)
+        daily_target = daily_targets_for_month(target_frame, month)
+        daily_target = daily_target[
+            daily_target["Date"].le(report_as_of.normalize())
+        ].copy()
+        actual_parts = []
+        for day, day_orders in performance.groupby("Date", sort=True):
+            day_fulfillment = fulfillment_revenue_frame(day_orders, lark["total"])
+            day_index = day_fulfillment.set_index("Fulfill By")
+            actual_parts.append(
+                {
+                    "Date": pd.Timestamp(day),
+                    "Actual 2026": (
+                        float(day_index.loc["FBM", "Revenue"])
+                        if "FBM" in day_index.index
+                        else 0.0
+                    ),
+                }
+            )
+        daily_comparison = daily_target.merge(
+            pd.DataFrame(actual_parts), on="Date", how="left"
+        )
+        daily_comparison["Actual 2026"] = daily_comparison["Actual 2026"].fillna(0)
+        daily_comparison["Vs Forecast"] = daily_comparison["Actual 2026"].div(
+            daily_comparison["Forecast 2026"].where(daily_comparison["Forecast 2026"].ne(0))
+        ).sub(1)
+        daily_comparison["YoY"] = daily_comparison["Actual 2026"].div(
+            daily_comparison["Revenue 2025"].where(daily_comparison["Revenue 2025"].ne(0))
+        ).sub(1)
+        daily_comparison["Date"] = daily_comparison["Date"].dt.strftime("%d/%m/%Y")
+        for column in ("Actual 2026", "Forecast 2026", "Revenue 2025"):
+            daily_comparison[column] = daily_comparison[column].map(format_money)
+        for column in ("Vs Forecast", "YoY"):
+            daily_comparison[column] = daily_comparison[column].map(
+                lambda value: f"{float(value):+.1%}" if pd.notna(value) else "N/A"
+            )
         target_html = f"""
         <div class="card"><h2>FBM Actual vs Target · All Stores</h2>
-        <div class="desc">Target từ sheet Revenue Forecast Q1&amp;2 - 2026 · Target MTD tính theo {int(progress['elapsed_days'])} ngày của lần input Order gần nhất.</div>
-        <div class="grid target-grid"><div class="metric"><span>Actual MTD</span><strong>{format_money(fbm_actual)}</strong></div><div class="metric"><span>Target MTD</span><strong>{format_money(float(progress['target_mtd']))}</strong></div><div class="metric"><span>Achievement</span><strong>{float(progress['achievement']):.1%}</strong></div><div class="metric"><span>Gap vs Target MTD</span><strong>{format_money(float(progress['gap']))}</strong></div><div class="metric"><span>Full-month Target</span><strong>{format_money(monthly_fbm_target)}</strong></div></div></div>
+        <div class="desc">Đúng từng ngày từ FORECAST 2026 và DAILY REV 2025 · đang tính {int(progress['elapsed_days'])} ngày theo lần input Order gần nhất.</div>
+        <div class="grid target-grid"><div class="metric"><span>Actual MTD 2026</span><strong>{format_money(fbm_actual)}</strong></div><div class="metric"><span>Forecast MTD 2026</span><strong>{format_money(float(progress['forecast_mtd']))}</strong></div><div class="metric"><span>Actual vs Forecast</span><strong>{float(progress['vs_forecast']):+.1%}</strong></div><div class="metric"><span>Revenue 2025 MTD</span><strong>{format_money(float(progress['prior_mtd']))}</strong></div><div class="metric"><span>Actual vs 2025</span><strong>{float(progress['vs_2025']):+.1%}</strong></div></div>
+        <div class="desc">Forecast cả tháng: {format_money(float(progress['forecast_full_month']))}</div>
+        <div class="table-scroll">{table_html(daily_comparison[["Date", "Actual 2026", "Forecast 2026", "Vs Forecast", "Revenue 2025", "YoY"]])}</div></div>
         """
 
     daily = performance.groupby("Date", as_index=False).agg(Revenue=("Revenue", "sum"))

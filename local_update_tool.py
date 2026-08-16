@@ -18,7 +18,11 @@ from ads_data import (
 from lark_data import LarkConfig, fetch_lark_frames
 from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
-from target_data import read_fbm_target_workbook, save_fbm_target_snapshot
+from target_data import (
+    read_fbm_target_workbook,
+    save_fbm_target_snapshot,
+    target_for_month,
+)
 
 
 DASHBOARD_ROOT = Path(__file__).resolve().parent
@@ -144,8 +148,8 @@ paw_order = order_cols[1].file_uploader(
 
 st.markdown("### FBM Revenue Target · chỉ upload khi thay đổi")
 st.caption(
-    "Chỉ đọc sheet `Revenue Forecast Q1&2 - 2026`, cột "
-    "`2026 Forecast Rev Monthly`. Target áp dụng cho All Stores · FBM."
+    "Chỉ đọc sheet `Revenue Forecast Q1&2 - 2026`: Date, DAILY REV 2025 và "
+    "FORECAST 2026 theo từng ngày. Target áp dụng cho All Stores · FBM."
 )
 fbm_target_upload = st.file_uploader(
     "Revenue Forecast", type=["xlsx"], key="fbm_target"
@@ -237,10 +241,7 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                     source_name=fbm_target_upload.name,
                 )
                 target_rows = len(target_frame)
-                july = target_frame.loc[
-                    target_frame["Month"].eq("2026-07"), "Target Revenue"
-                ]
-                target_july = None if july.empty else float(july.iloc[0])
+                target_july = target_for_month(target_frame, "2026-07")
 
             order_checks = {
                 "Wrappiness": validate_order_window(files["wr_order"], "Wrappiness", month, as_of),
@@ -346,7 +347,7 @@ if "last_build" in st.session_state:
             else ""
         )
         st.success(
-            f"Đã lưu {build['target_rows']} target tháng từ sheet Revenue Forecast Q1&2 - 2026"
+            f"Đã lưu {build['target_rows']} dòng target ngày từ sheet Revenue Forecast Q1&2 - 2026"
             + target_label
         )
     elif FBM_TARGET_SNAPSHOT.exists():

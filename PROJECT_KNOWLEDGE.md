@@ -74,16 +74,22 @@ nguồn được cập nhật, timezone, phạm vi ngày và số dòng snapshot
 ### FBM Revenue Target
 
 - Nguồn target chỉ dùng sheet `Revenue Forecast Q1&2 - 2026` trong workbook
-  forecast và chỉ đọc cột `2026 Forecast Rev Monthly`; không dùng `Output Plan`,
-  `Estimated Margin` hay bất kỳ sheet nào khác.
+  forecast và ba cột theo ngày: `Date`, `DAILY REV 2025`, `FORECAST 2026`;
+  không dùng `2026 Forecast Rev Monthly`, `Output Plan`, `Estimated Margin` hay
+  bất kỳ sheet nào khác.
 - Target hiện là tổng FBM của `All Stores`, chưa phân bổ cho Wrappiness hoặc
   Pawsionate. Khi chọn riêng một store, dashboard không tự chia target.
 - Actual là FBM Revenue của Order snapshot trong Purchase Month Los Angeles.
-- `Target MTD = Target tháng / số ngày trong tháng × số ngày đã input Order`.
-  Số ngày đã input lấy từ `report_as_of_date`, không lấy Purchase Date mới nhất.
-  Tháng đã kết thúc dùng toàn bộ target tháng.
+- `Forecast MTD 2026` là tổng các giá trị `FORECAST 2026` cụ thể từ ngày 01 đến
+  `report_as_of_date`; tuyệt đối không chia đều target tháng cho từng ngày.
+- `Revenue 2025 MTD` là tổng `DAILY REV 2025` trên cùng số ngày. Dashboard hiển
+  thị `Actual vs Forecast = Actual 2026 / Forecast 2026 - 1` và
+  `Actual vs 2025 = Actual 2026 / Revenue 2025 - 1`.
+- Actual 2026 lấy từ Order snapshot FBM theo Purchase Date Los Angeles. Ngày
+  chốt so sánh lấy từ `report_as_of_date`, không lấy Purchase Date mới nhất.
+  Tháng đã kết thúc dùng toàn bộ các dòng ngày của tháng.
 - Local Update Tool chỉ yêu cầu upload workbook khi target thay đổi. Dữ liệu đã
-  chuẩn hóa được lưu tại `snapshot/fbm_target.csv` kèm metadata và được tái sử
+  chuẩn hóa thành 365 dòng ngày tại `snapshot/fbm_target.csv` kèm metadata và được tái sử
   dụng cho những lần cập nhật Order tiếp theo.
 
 ## 4. Lark Base và mapping sản phẩm
