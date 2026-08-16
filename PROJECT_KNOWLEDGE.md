@@ -71,6 +71,21 @@ Snapshot Order chỉ chứa:
 `snapshot/dashboard_snapshot.metadata.json` lưu schema version, thời điểm report
 nguồn được cập nhật, timezone, phạm vi ngày và số dòng snapshot.
 
+### FBM Revenue Target
+
+- Nguồn target chỉ dùng sheet `Revenue Forecast Q1&2 - 2026` trong workbook
+  forecast và chỉ đọc cột `2026 Forecast Rev Monthly`; không dùng `Output Plan`,
+  `Estimated Margin` hay bất kỳ sheet nào khác.
+- Target hiện là tổng FBM của `All Stores`, chưa phân bổ cho Wrappiness hoặc
+  Pawsionate. Khi chọn riêng một store, dashboard không tự chia target.
+- Actual là FBM Revenue của Order snapshot trong Purchase Month Los Angeles.
+- `Target MTD = Target tháng / số ngày trong tháng × số ngày đã input Order`.
+  Số ngày đã input lấy từ `report_as_of_date`, không lấy Purchase Date mới nhất.
+  Tháng đã kết thúc dùng toàn bộ target tháng.
+- Local Update Tool chỉ yêu cầu upload workbook khi target thay đổi. Dữ liệu đã
+  chuẩn hóa được lưu tại `snapshot/fbm_target.csv` kèm metadata và được tái sử
+  dụng cho những lần cập nhật Order tiếp theo.
+
 ## 4. Lark Base và mapping sản phẩm
 
 Các bảng nguồn:

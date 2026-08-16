@@ -23,6 +23,7 @@ from product_data import (
     top_record_id_frame,
 )
 from snapshot_store import load_snapshot, load_snapshot_metadata
+from target_data import load_fbm_target_snapshot, target_for_month, target_progress
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -182,6 +183,25 @@ def export(month: str, output: Path) -> None:
         ["Revenue", "Orders"], ascending=False, kind="stable"
     ).copy()
     fulfillment_display["Revenue"] = fulfillment_display["Revenue"].map(format_money)
+
+    target_html = ""
+    target_frame = load_fbm_target_snapshot(PROJECT_ROOT / "snapshot/fbm_target.csv")
+    monthly_fbm_target = target_for_month(target_frame, month)
+    order_meta = load_snapshot_metadata(order_path)
+    report_as_of = pd.to_datetime(order_meta.get("report_as_of_date"), errors="coerce")
+    if monthly_fbm_target is not None and pd.notna(report_as_of):
+        fulfillment_index = fulfillment.set_index("Fulfill By")
+        fbm_actual = (
+            float(fulfillment_index.loc["FBM", "Revenue"])
+            if "FBM" in fulfillment_index.index
+            else 0.0
+        )
+        progress = target_progress(month, monthly_fbm_target, fbm_actual, report_as_of)
+        target_html = f"""
+        <div class="card"><h2>FBM Actual vs Target · All Stores</h2>
+        <div class="desc">Target từ sheet Revenue Forecast Q1&amp;2 - 2026 · Target MTD tính theo {int(progress['elapsed_days'])} ngày của lần input Order gần nhất.</div>
+        <div class="grid target-grid"><div class="metric"><span>Actual MTD</span><strong>{format_money(fbm_actual)}</strong></div><div class="metric"><span>Target MTD</span><strong>{format_money(float(progress['target_mtd']))}</strong></div><div class="metric"><span>Achievement</span><strong>{float(progress['achievement']):.1%}</strong></div><div class="metric"><span>Gap vs Target MTD</span><strong>{format_money(float(progress['gap']))}</strong></div><div class="metric"><span>Full-month Target</span><strong>{format_money(monthly_fbm_target)}</strong></div></div></div>
+        """
 
     daily = performance.groupby("Date", as_index=False).agg(Revenue=("Revenue", "sum"))
     daily_max = max(float(daily["Revenue"].max()), 1)
@@ -394,6 +414,7 @@ def export(month: str, output: Path) -> None:
     ads_display.loc[ads_display["Nhân sự"].eq("Nhi-Support"), "TACOS"] = pd.NA
     total_spend = float(ads_display["Ads_Spend"].sum())
     total_sales = float(ads_display["Ads_Sales"].sum())
+    weighted_acos = f"{total_spend / total_sales:.1%}" if total_sales else "N/A"
     ads_display = ads_display.sort_values(
         ["Ads_Spend", "Ads_Sales"], ascending=False, kind="stable"
     )
@@ -413,14 +434,13 @@ def export(month: str, output: Path) -> None:
         lambda value: f"{float(value):.1%}" if pd.notna(value) else "N/A"
     )
 
-    order_meta = load_snapshot_metadata(order_path)
     updated = order_meta.get("source_updated_at") or order_meta.get("updated_at") or ""
     month_label = start.strftime("%m/%Y")
     generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
     css = """
     :root{--ink:#182033;--muted:#778193;--line:#e3e7ee;--bg:#f3f5f8;--orange:#ef772d;--nav:#151d2e}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    .shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{background:var(--nav);padding:28px 18px;color:#fff;position:sticky;top:0;height:100vh}.brand{font-weight:850;font-size:20px;margin-bottom:8px}.brand-sub{color:#9aa7bc;font-size:12px;margin-bottom:30px}.nav button{display:block;width:100%;border:0;background:transparent;color:#cbd3e2;text-align:left;padding:12px 14px;border-radius:10px;margin:5px 0;font-weight:650;cursor:pointer}.nav button.active,.nav button:hover{background:#ffffff16;color:#fff}.main{padding:38px;max-width:1700px}.page{display:none}.page.active{display:block}.eyebrow{color:#8792a6;font-size:12px;font-weight:850;letter-spacing:.15em}.title{font-size:42px;line-height:1.1;margin:5px 0 8px}.sub{color:var(--muted);margin-bottom:24px}.notice{background:#fff7ef;border:1px solid #f1d5bd;border-radius:14px;padding:15px 18px;margin-bottom:22px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:16px 0}.metric,.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 30px #25324b0a}.metric span{color:var(--muted);font-size:13px}.metric strong{display:block;font-size:30px;margin-top:6px}.metric small{color:#94a0b2}.card{margin:18px 0}.card h2{margin:0 0 5px;font-size:20px}.card .desc{color:var(--muted);font-size:13px;margin-bottom:15px}.dark-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;background:linear-gradient(135deg,#151d2e,#283753);padding:16px;border-radius:16px}.dark-strip .metric{background:#ffffff0b;border-color:#ffffff12;color:#fff;box-shadow:none}.dark-strip .metric span,.dark-strip .metric small{color:#9facbf}.chart{height:245px;display:flex;align-items:flex-end;gap:4px;padding:18px 4px 5px;border-bottom:1px solid var(--line)}.bar-wrap{height:100%;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:8px}.bar{width:78%;background:linear-gradient(#ff9a56,#ef772d);border-radius:5px 5px 1px 1px;min-height:3px}.bar-wrap span{font-size:9px;color:#8b95a5;margin-top:5px}.table-scroll{overflow:auto;max-height:760px;border:1px solid var(--line);border-radius:12px}.data-table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}.data-table th{position:sticky;top:0;background:#f7f8fa;color:#687386;text-align:left;padding:11px;white-space:nowrap;border-bottom:1px solid var(--line)}.data-table td{padding:10px 11px;border-bottom:1px solid #edf0f4;white-space:nowrap}.data-table tr:hover td{background:#fff9f3}.products img{width:44px;height:44px;object-fit:cover;border-radius:8px}.split{display:grid;grid-template-columns:1fr 1fr;gap:18px}.footer{color:#8a94a4;font-size:12px;margin:34px 0 10px}.empty{padding:30px;color:var(--muted);text-align:center}.pill{display:inline-block;background:#eaf7ed;color:#268340;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:700}
+    .shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{background:var(--nav);padding:28px 18px;color:#fff;position:sticky;top:0;height:100vh}.brand{font-weight:850;font-size:20px;margin-bottom:8px}.brand-sub{color:#9aa7bc;font-size:12px;margin-bottom:30px}.nav button{display:block;width:100%;border:0;background:transparent;color:#cbd3e2;text-align:left;padding:12px 14px;border-radius:10px;margin:5px 0;font-weight:650;cursor:pointer}.nav button.active,.nav button:hover{background:#ffffff16;color:#fff}.main{padding:38px;max-width:1700px}.page{display:none}.page.active{display:block}.eyebrow{color:#8792a6;font-size:12px;font-weight:850;letter-spacing:.15em}.title{font-size:42px;line-height:1.1;margin:5px 0 8px}.sub{color:var(--muted);margin-bottom:24px}.notice{background:#fff7ef;border:1px solid #f1d5bd;border-radius:14px;padding:15px 18px;margin-bottom:22px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:16px 0}.target-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.metric,.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 30px #25324b0a}.card .metric{background:#f8fafc;box-shadow:none}.metric span{color:var(--muted);font-size:13px}.metric strong{display:block;font-size:30px;margin-top:6px}.metric small{color:#94a0b2}.card{margin:18px 0}.card h2{margin:0 0 5px;font-size:20px}.card .desc{color:var(--muted);font-size:13px;margin-bottom:15px}.dark-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;background:linear-gradient(135deg,#151d2e,#283753);padding:16px;border-radius:16px}.dark-strip .metric{background:#ffffff0b;border-color:#ffffff12;color:#fff;box-shadow:none}.dark-strip .metric span,.dark-strip .metric small{color:#9facbf}.chart{height:245px;display:flex;align-items:flex-end;gap:4px;padding:18px 4px 5px;border-bottom:1px solid var(--line)}.bar-wrap{height:100%;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:8px}.bar{width:78%;background:linear-gradient(#ff9a56,#ef772d);border-radius:5px 5px 1px 1px;min-height:3px}.bar-wrap span{font-size:9px;color:#8b95a5;margin-top:5px}.table-scroll{overflow:auto;max-height:760px;border:1px solid var(--line);border-radius:12px}.data-table{width:100%;border-collapse:collapse;background:#fff;font-size:12px}.data-table th{position:sticky;top:0;background:#f7f8fa;color:#687386;text-align:left;padding:11px;white-space:nowrap;border-bottom:1px solid var(--line)}.data-table td{padding:10px 11px;border-bottom:1px solid #edf0f4;white-space:nowrap}.data-table tr:hover td{background:#fff9f3}.products img{width:44px;height:44px;object-fit:cover;border-radius:8px}.split{display:grid;grid-template-columns:1fr 1fr;gap:18px}.footer{color:#8a94a4;font-size:12px;margin:34px 0 10px}.empty{padding:30px;color:var(--muted);text-align:center}.pill{display:inline-block;background:#eaf7ed;color:#268340;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:700}
     @media(max-width:1050px){.shell{display:block}.side{height:auto;position:static}.nav{display:flex;overflow:auto}.nav button{width:auto;white-space:nowrap}.main{padding:22px}.grid{grid-template-columns:repeat(2,1fr)}.dark-strip{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}.title{font-size:34px}}
     @media print{.side{display:none}.shell{display:block}.main{padding:10px}.page{display:block!important;page-break-before:always}.page:first-child{page-break-before:auto}.table-scroll{max-height:none;overflow:visible}.data-table th{position:static}}
     """
@@ -429,13 +449,14 @@ def export(month: str, output: Path) -> None:
     <button class="active" data-page="overview">Tổng quan</button><button data-page="products">Sản phẩm</button><button data-page="ads">Ads performance</button><button data-page="team">Team KPI</button></nav></aside><main class="main">
     <section id="overview" class="page active"><div class="eyebrow">PERFORMANCE SNAPSHOT</div><h1 class="title">Tháng {month_label}</h1><div class="sub">Order Report thực tế · Purchase Time theo America/Los_Angeles</div><div class="notice"><b>All Stores</b> · Revenue = Item Price + Shipping Price · Đã loại Cancelled</div>
     <div class="grid"><div class="metric"><span>Net Revenue</span><strong>{format_money(revenue)}</strong></div><div class="metric"><span>Orders</span><strong>{orders:,}</strong></div><div class="metric"><span>Units</span><strong>{units:,}</strong></div><div class="metric"><span>Active ASINs</span><strong>{asins:,}</strong></div></div>
+    {target_html}
     <div class="split"><div class="card"><h2>Revenue theo ngày</h2><div class="desc">Tổng hai store theo Purchase Date Los Angeles</div><div class="chart">{daily_bars}</div></div><div class="card"><h2>Revenue theo Fulfillment</h2><div class="desc">TOTAL ASIN Fulfill By, ưu tiên ASIN và fallback Record ID</div><div class="table-scroll">{table_html(fulfillment_display)}</div></div></div>
     <div class="card"><h2>Store breakdown</h2><div class="table-scroll">{table_html(stores)}</div></div></section>
 
     <section id="products" class="page"><div class="eyebrow">PRODUCT PERFORMANCE</div><h1 class="title">Top 50 Record ID</h1><div class="sub">Gộp Revenue, Orders và Units của toàn bộ ASIN cùng sản phẩm · Revenue mapped <span class="pill">{attribution['coverage']:.1%}</span></div><div class="card"><div class="table-scroll">{top_html}</div></div></section>
 
     <section id="ads" class="page"><div class="eyebrow">ADVERTISING PERFORMANCE</div><h1 class="title">Ads · Tháng {month_label}</h1><div class="sub">WR: SP/SB/SD · PAW: SP, SB/SD không phát sinh · Mapping ASIN → TOTAL ASIN → ownership</div>
-    <div class="grid"><div class="metric"><span>Ads Spend</span><strong>{format_money(total_spend)}</strong></div><div class="metric"><span>Ads Sales</span><strong>{format_money(total_sales)}</strong></div><div class="metric"><span>Ads Orders</span><strong>{int(pd.to_numeric(ads_summary['Ads_Orders'], errors='coerce').fillna(0).sum()):,}</strong></div><div class="metric"><span>Weighted ACOS</span><strong>{total_spend / total_sales:.1%}</strong></div></div>
+    <div class="grid"><div class="metric"><span>Ads Spend</span><strong>{format_money(total_spend)}</strong></div><div class="metric"><span>Ads Sales</span><strong>{format_money(total_sales)}</strong></div><div class="metric"><span>Ads Orders</span><strong>{int(pd.to_numeric(ads_summary['Ads_Orders'], errors='coerce').fillna(0).sum()):,}</strong></div><div class="metric"><span>Weighted ACOS</span><strong>{weighted_acos}</strong></div></div>
     <div class="card"><h2>Ads theo nhân sự</h2><div class="desc">TACOS chỉ hiển thị khi hàng có ownership Revenue; Nhi-Support không nhận Revenue.</div><div class="table-scroll">{table_html(ads_display)}</div></div></section>
 
     <section id="team" class="page"><div class="eyebrow">TEAM KPI · RECORD LEVEL</div><h1 class="title">Workflow KPI từ Lark</h1><div class="sub">Lark calendar date không đổi timezone · Revenue/Units theo Purchase Month Los Angeles</div>

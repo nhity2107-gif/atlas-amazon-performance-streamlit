@@ -35,6 +35,11 @@ from snapshot_store import (
     load_snapshot,
     load_snapshot_metadata,
 )
+from target_data import (
+    load_fbm_target_snapshot,
+    target_for_month,
+    target_progress,
+)
 from team_kpi import (
     asin_new_revenue_from_custom_cohort,
     asin_portfolio_revenue,
@@ -49,6 +54,7 @@ PERSISTED_ADS_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "ads"
 PUBLISHED_ADS_SNAPSHOT_PATH = (
     Path(__file__).with_name("snapshot") / "published_ads_snapshot.enc"
 )
+PERSISTED_FBM_TARGET_PATH = Path(__file__).with_name("snapshot") / "fbm_target.csv"
 
 
 st.set_page_config(
@@ -225,7 +231,10 @@ def daily_frame(store_name: str, month: str | None = None) -> pd.DataFrame:
     )
 
 
-def daily_revenue_quantity_chart(frame: pd.DataFrame) -> go.Figure:
+def daily_revenue_quantity_chart(
+    frame: pd.DataFrame,
+    daily_target: float | None = None,
+) -> go.Figure:
     figure = make_subplots(specs=[[{"secondary_y": True}]])
     figure.add_trace(
         go.Bar(
@@ -249,6 +258,18 @@ def daily_revenue_quantity_chart(frame: pd.DataFrame) -> go.Figure:
         ),
         secondary_y=True,
     )
+    if daily_target is not None and not frame.empty:
+        figure.add_trace(
+            go.Scatter(
+                x=frame["Date"],
+                y=[daily_target] * len(frame),
+                name="FBM Target / day",
+                mode="lines",
+                line={"color": "#64748b", "width": 2, "dash": "dash"},
+                hovertemplate="%{x|%d/%m/%Y}<br>Target: $%{y:,.2f}<extra></extra>",
+            ),
+            secondary_y=False,
+        )
     figure.update_xaxes(tickformat="%d/%m", title_text="Ngày")
     figure.update_yaxes(title_text="Revenue (USD)", tickprefix="$", secondary_y=False)
     figure.update_yaxes(title_text="Quantity", rangemode="tozero", secondary_y=True)
@@ -1177,6 +1198,7 @@ if page.startswith("01"):
         overview_performance,
         overview_lark["total"] if overview_lark else pd.DataFrame(),
     )
+    fbm_actual_revenue = 0.0
     if not fulfillment.empty:
         fulfillment_index = fulfillment.set_index("Fulfill By")
         fulfillment_cols = st.columns(2)
@@ -1187,6 +1209,8 @@ if page.startswith("01"):
                 else pd.Series({"Revenue": 0, "Orders": 0, "ASINs": 0})
             )
             revenue = float(row["Revenue"])
+            if fulfillment_type == "FBM":
+                fbm_actual_revenue = revenue
             column.metric(
                 f"{fulfillment_type} revenue",
                 money(revenue),
@@ -1202,6 +1226,51 @@ if page.startswith("01"):
                 f'Có {int(unmapped["ASINs"]):,} ASIN chưa map Fulfill By, '
                 f'tương ứng {money(float(unmapped["Revenue"]))} Revenue.'
             )
+
+    fbm_target_progress = None
+    fbm_targets = load_fbm_target_snapshot(PERSISTED_FBM_TARGET_PATH)
+    monthly_fbm_target = target_for_month(fbm_targets, selected_month)
+    if monthly_fbm_target is not None and store == "All Stores":
+        target_as_of = report_as_of_date
+        if pd.isna(target_as_of):
+            target_as_of = pd.to_datetime(
+                overview_performance.get("Date", pd.Series(dtype="datetime64[ns]")),
+                errors="coerce",
+            ).max()
+        if pd.notna(target_as_of):
+            fbm_target_progress = target_progress(
+                selected_month,
+                monthly_fbm_target,
+                fbm_actual_revenue,
+                target_as_of,
+            )
+            st.markdown(
+                '<div class="atlas-card"><div class="atlas-eyebrow">FBM ACTUAL VS TARGET · ALL STORES</div><h3>Tiến độ Revenue FBM</h3></div>',
+                unsafe_allow_html=True,
+            )
+            target_cols = st.columns(5)
+            target_cols[0].metric("Actual MTD", money(fbm_actual_revenue))
+            target_cols[1].metric(
+                "Target MTD", money(float(fbm_target_progress["target_mtd"]))
+            )
+            target_cols[2].metric(
+                "Achievement", f'{float(fbm_target_progress["achievement"]):.1%}'
+            )
+            target_cols[3].metric(
+                "Gap vs Target MTD",
+                money(float(fbm_target_progress["gap"])),
+            )
+            target_cols[4].metric("Full-month Target", money(monthly_fbm_target))
+            st.caption(
+                "Target lấy từ sheet `Revenue Forecast Q1&2 - 2026`, cột "
+                "`2026 Forecast Rev Monthly`. Target MTD = target tháng / số ngày trong tháng "
+                f"× {int(fbm_target_progress['elapsed_days'])} ngày theo ngày input Order gần nhất."
+            )
+    elif monthly_fbm_target is not None and store != "All Stores":
+        st.info(
+            "Target FBM hiện được cung cấp ở cấp All Stores, chưa có phân bổ theo từng store. "
+            "Chọn All Stores để xem Actual vs Target."
+        )
 
     left, right = st.columns([2, 1])
     with left:
@@ -1221,12 +1290,27 @@ if page.startswith("01"):
                 )
                 with chart_tab:
                     st.plotly_chart(
-                        daily_revenue_quantity_chart(daily_performance),
+                        daily_revenue_quantity_chart(
+                            daily_performance,
+                            daily_target=(
+                                float(fbm_target_progress["daily_target"])
+                                if fulfillment_type == "FBM"
+                                and fbm_target_progress is not None
+                                else None
+                            ),
+                        ),
                         width="stretch",
                         config={"displayModeBar": False},
                     )
                 with table_tab:
                     daily_table = daily_performance[["Date", "Revenue", "Quantity"]].copy()
+                    if fulfillment_type == "FBM" and fbm_target_progress is not None:
+                        daily_table["Target Revenue"] = float(
+                            fbm_target_progress["daily_target"]
+                        )
+                        daily_table["Variance"] = (
+                            daily_table["Revenue"] - daily_table["Target Revenue"]
+                        )
                     st.dataframe(
                         daily_table,
                         width="stretch",
@@ -1238,6 +1322,12 @@ if page.startswith("01"):
                             ),
                             "Quantity": st.column_config.NumberColumn(
                                 "Quantity", format="%d", help="Tổng Units theo Purchase Date"
+                            ),
+                            "Target Revenue": st.column_config.NumberColumn(
+                                "Target / day", format="dollar"
+                            ),
+                            "Variance": st.column_config.NumberColumn(
+                                "Variance", format="dollar"
                             ),
                         },
                     )

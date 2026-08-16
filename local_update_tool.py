@@ -18,6 +18,7 @@ from ads_data import (
 from lark_data import LarkConfig, fetch_lark_frames
 from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
+from target_data import read_fbm_target_workbook, save_fbm_target_snapshot
 
 
 DASHBOARD_ROOT = Path(__file__).resolve().parent
@@ -37,6 +38,7 @@ ORDER_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "dashboard_snapshot.csv"
 LARK_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "lark"
 ADS_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "ads"
 PUBLISHED_ADS = DASHBOARD_ROOT / "snapshot" / "published_ads_snapshot.enc"
+FBM_TARGET_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "fbm_target.csv"
 
 
 def save_upload(upload, path: Path) -> Path:
@@ -140,6 +142,20 @@ paw_order = order_cols[1].file_uploader(
     "Pawsionate Order", type=["txt", "tsv", "csv"], key="paw_order"
 )
 
+st.markdown("### FBM Revenue Target · chỉ upload khi thay đổi")
+st.caption(
+    "Chỉ đọc sheet `Revenue Forecast Q1&2 - 2026`, cột "
+    "`2026 Forecast Rev Monthly`. Target áp dụng cho All Stores · FBM."
+)
+fbm_target_upload = st.file_uploader(
+    "Revenue Forecast", type=["xlsx"], key="fbm_target"
+)
+if fbm_target_upload is None:
+    if FBM_TARGET_SNAPSHOT.exists():
+        st.info("Không upload target mới: dashboard tiếp tục dùng target đã lưu gần nhất.")
+    else:
+        st.warning("Chưa có target đã lưu. Hãy upload file forecast để bật so sánh Actual vs Target.")
+
 include_ads = st.checkbox(
     "Import 6 Ads report cuối tháng",
     value=False,
@@ -205,6 +221,26 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                         "paw_sd": save_upload(paw_sd, raw_root / "Pawsionate" / "Ads" / f"pawsionate-sd-mtd{Path(paw_sd.name).suffix}"),
                     }
                 )
+
+            target_updated = fbm_target_upload is not None
+            target_rows = 0
+            target_july = None
+            if target_updated:
+                target_file = save_upload(
+                    fbm_target_upload,
+                    raw_root / "Targets" / "fbm-revenue-forecast.xlsx",
+                )
+                target_frame = read_fbm_target_workbook(target_file)
+                save_fbm_target_snapshot(
+                    FBM_TARGET_SNAPSHOT,
+                    target_frame,
+                    source_name=fbm_target_upload.name,
+                )
+                target_rows = len(target_frame)
+                july = target_frame.loc[
+                    target_frame["Month"].eq("2026-07"), "Target Revenue"
+                ]
+                target_july = None if july.empty else float(july.iloc[0])
 
             order_checks = {
                 "Wrappiness": validate_order_window(files["wr_order"], "Wrappiness", month, as_of),
@@ -275,6 +311,9 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "ads_updated": include_ads,
                 "ads_spend": ads_spend,
                 "ads_sales": ads_sales,
+                "target_updated": target_updated,
+                "target_rows": target_rows,
+                "target_july": target_july,
             }
             st.success("Đã kiểm tra và sinh snapshot dashboard thành công.")
             if lark_refreshed:
@@ -300,6 +339,18 @@ if "last_build" in st.session_state:
     metrics[1].metric("Order revenue", f"${build['order_snapshot']['revenue']:,.2f}")
     metrics[2].metric("Ads spend", f"${build['ads_spend']:,.2f}" if build["ads_updated"] else "Không cập nhật")
     metrics[3].metric("Ads sales", f"${build['ads_sales']:,.2f}" if build["ads_updated"] else "Không cập nhật")
+    if build.get("target_updated"):
+        target_label = (
+            f" · Target 07/2026: ${build['target_july']:,.0f}"
+            if build.get("target_july") is not None
+            else ""
+        )
+        st.success(
+            f"Đã lưu {build['target_rows']} target tháng từ sheet Revenue Forecast Q1&2 - 2026"
+            + target_label
+        )
+    elif FBM_TARGET_SNAPSHOT.exists():
+        st.caption("FBM target: giữ nguyên snapshot đã lưu gần nhất.")
     order_status = ", ".join(
         f"{store}: {check['rows']:,} dòng"
         + (" (0 order hợp lệ)" if check["rows"] == 0 else "")
@@ -317,8 +368,11 @@ if "last_build" in st.session_state:
         )
         publish_label = "2 · Mã hóa Ads, kiểm thử và push"
     else:
-        st.info("Lần cập nhật này chỉ publish Order snapshot; Ads snapshot không thay đổi.")
-        publish_label = "2 · Kiểm thử và push Order"
+        target_note = " và FBM target" if build.get("target_updated") else ""
+        st.info(
+            f"Lần cập nhật này publish Order snapshot{target_note}; Ads snapshot không thay đổi."
+        )
+        publish_label = f"2 · Kiểm thử và push Order{target_note}"
     if st.button(publish_label, use_container_width=True):
         try:
             if build["ads_updated"]:
@@ -344,6 +398,13 @@ if "last_build" in st.session_state:
             ]
             if build["ads_updated"]:
                 publish_files.append("snapshot/published_ads_snapshot.enc")
+            if build.get("target_updated"):
+                publish_files.extend(
+                    [
+                        "snapshot/fbm_target.csv",
+                        "snapshot/fbm_target.metadata.json",
+                    ]
+                )
             run_git("add", *publish_files)
             staged = run_git("diff", "--cached", "--name-only").stdout.strip()
             if not staged:
