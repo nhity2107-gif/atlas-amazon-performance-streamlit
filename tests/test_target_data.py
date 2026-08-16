@@ -8,9 +8,9 @@ import unittest
 from openpyxl import Workbook
 import pandas as pd
 
+import target_data as target_module
 from target_data import (
     TARGET_SHEET,
-    TargetError,
     daily_targets_for_month,
     load_fbm_target_snapshot,
     normalize_fbm_daily_target,
@@ -96,7 +96,7 @@ class TargetDataTests(unittest.TestCase):
             workbook.active.title = TARGET_SHEET
             workbook.active.append(["Month", "Other", "Forecast"])
             workbook.save(path)
-            with self.assertRaises(TargetError):
+            with self.assertRaises(target_module.TargetError):
                 read_fbm_target_workbook(path)
 
 

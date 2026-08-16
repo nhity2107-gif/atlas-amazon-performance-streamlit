@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import importlib
 from pathlib import Path
 
 import pandas as pd
@@ -35,18 +36,23 @@ from snapshot_store import (
     load_snapshot,
     load_snapshot_metadata,
 )
-from target_data import (
-    daily_targets_for_month,
-    load_fbm_target_snapshot,
-    target_for_month,
-    target_progress,
-)
+import target_data as _target_data
 from team_kpi import (
     asin_new_revenue_from_custom_cohort,
     asin_portfolio_revenue,
     fbm_asin_rows,
     workflow_kpi_window_end,
 )
+
+
+# Streamlit Cloud hot-reloads the app file but can retain an older imported
+# module in the same process. Reload explicitly so a deployment that changes
+# the target snapshot schema never imports stale target_data functions.
+_target_data = importlib.reload(_target_data)
+daily_targets_for_month = _target_data.daily_targets_for_month
+load_fbm_target_snapshot = _target_data.load_fbm_target_snapshot
+target_for_month = _target_data.target_for_month
+target_progress = _target_data.target_progress
 
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"

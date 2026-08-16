@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import importlib
 import os
 from pathlib import Path
 import subprocess
@@ -18,11 +19,13 @@ from ads_data import (
 from lark_data import LarkConfig, fetch_lark_frames
 from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
-from target_data import (
-    read_fbm_target_workbook,
-    save_fbm_target_snapshot,
-    target_for_month,
-)
+import target_data as _target_data
+
+
+_target_data = importlib.reload(_target_data)
+read_fbm_target_workbook = _target_data.read_fbm_target_workbook
+save_fbm_target_snapshot = _target_data.save_fbm_target_snapshot
+target_for_month = _target_data.target_for_month
 
 
 DASHBOARD_ROOT = Path(__file__).resolve().parent
