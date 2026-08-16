@@ -44,6 +44,10 @@ phải cập nhật cả code, test và tài liệu này.
 - Tab Tổng quan tách Revenue theo `Fulfill By` từ TOTAL ASIN. Ưu tiên map trực
   tiếp ASIN; nếu ASIN Order chưa khớp thì fallback qua `record_id_hint` để lấy
   Fulfill By của Record ID. FBA + FBM phải bằng Net Revenue.
+- Daily Performance trên tab Tổng quan hiển thị hai biểu đồ và hai bảng dữ liệu
+  riêng cho FBM và FBA. Cả hai dùng Purchase Date Los Angeles và cùng logic
+  mapping `Fulfill By` như các thẻ Revenue; các ngày không phát sinh được giữ
+  với Revenue/Quantity bằng 0 để hai chuỗi thời gian thẳng hàng.
 - Daily import upsert theo `order-item-id`.
 - Weekly/monthly import thay thế toàn bộ store + khoảng ngày Los Angeles được
   chỉ định trước khi insert report mới.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,7 +21,17 @@ from scripts.local_data_pipeline import export_snapshot, ingest_order_report, pr
 
 
 DASHBOARD_ROOT = Path(__file__).resolve().parent
-ATLAS_ROOT = DASHBOARD_ROOT.parent
+_configured_data_root = os.environ.get("ATLAS_LOCAL_DATA_ROOT", "").strip()
+if _configured_data_root:
+    ATLAS_ROOT = Path(_configured_data_root).expanduser().resolve()
+elif sys.platform == "win32":
+    # The PC installation keeps the repository in
+    # D:\\Atlas Amazon Performance\\dashboard and data beside it.
+    ATLAS_ROOT = DASHBOARD_ROOT.parent
+else:
+    # Keep Mac/Linux runtime data inside the writable project workspace.
+    # This folder is gitignored and never published with the dashboard.
+    ATLAS_ROOT = DASHBOARD_ROOT / ".local-data"
 DATABASE = ATLAS_ROOT / "database" / "atlas.db"
 ORDER_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "dashboard_snapshot.csv"
 LARK_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "lark"

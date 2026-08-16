@@ -12,3 +12,5 @@ reports/
 snapshot/*.plain.*
 snapshot/lark/
 snapshot/ads/
+exports/
+.local-data/

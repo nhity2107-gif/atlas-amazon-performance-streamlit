@@ -6,6 +6,7 @@ import pandas as pd
 
 from product_data import (
     fulfillment_revenue_frame,
+    order_fulfillment_frame,
     records_from_order_hints,
     revenue_milestone_counts,
     top_record_id_frame,
@@ -114,6 +115,22 @@ class ProductDataTests(unittest.TestCase):
         self.assertEqual(result.loc["FBA", "Revenue"], 100)
         self.assertEqual(result.loc["FBM", "Revenue"], 50)
         self.assertNotIn("Unmapped", result.index)
+
+    def test_order_fulfillment_preserves_rows_for_daily_split(self) -> None:
+        performance = pd.DataFrame([
+            {"Date": "2026-08-01", "ASIN": "B000000001", "record_id_hint": "rec1", "Revenue": 100, "Orders": 2, "Units": 3},
+            {"Date": "2026-08-01", "ASIN": "B000000099", "record_id_hint": "rec2", "Revenue": 50, "Orders": 1, "Units": 1},
+        ])
+        total = pd.DataFrame([
+            {"asin": "B000000001", "record_id": "rec1", "fulfill_by": "FBA"},
+            {"asin": "B000000002", "record_id": "rec2", "fulfill_by": "FBM"},
+        ])
+
+        result = order_fulfillment_frame(performance, total)
+
+        self.assertEqual(result["Fulfill By"].tolist(), ["FBA", "FBM"])
+        self.assertEqual(result["Date"].tolist(), ["2026-08-01", "2026-08-01"])
+        self.assertEqual(result["Revenue"].sum(), 150)
 
     def test_confirmed_fba_asin_override_corrects_bad_total_asin_value(self) -> None:
         performance = pd.DataFrame([

@@ -89,13 +89,15 @@ def records_from_order_hints(performance: pd.DataFrame) -> pd.DataFrame:
     return records
 
 
-def fulfillment_revenue_frame(
+def order_fulfillment_frame(
     performance: pd.DataFrame,
     total_asins: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Split Order revenue by TOTAL ASIN Fulfill By, with Record ID fallback."""
-    columns = ["Fulfill By", "Revenue", "Orders", "Units", "ASINs"]
-    required_order = {"ASIN", "Revenue", "Orders", "Units"}
+    """Attach TOTAL ASIN Fulfill By to each Order snapshot row."""
+    columns = list(performance.columns)
+    if "Fulfill By" not in columns:
+        columns.append("Fulfill By")
+    required_order = {"ASIN"}
     required_total = {"asin", "record_id", "fulfill_by"}
     if (
         performance.empty
@@ -137,6 +139,21 @@ def fulfillment_revenue_frame(
         frame["Fulfill By"].str.upper().isin(["FBA", "FBM"]),
         "Unmapped",
     )
+    return frame
+
+
+def fulfillment_revenue_frame(
+    performance: pd.DataFrame,
+    total_asins: pd.DataFrame,
+) -> pd.DataFrame:
+    """Split Order revenue by TOTAL ASIN Fulfill By, with Record ID fallback."""
+    columns = ["Fulfill By", "Revenue", "Orders", "Units", "ASINs"]
+    required_order = {"ASIN", "Revenue", "Orders", "Units"}
+    if performance.empty or not required_order.issubset(performance.columns):
+        return pd.DataFrame(columns=columns)
+    frame = order_fulfillment_frame(performance, total_asins)
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
     for column in ("Revenue", "Orders", "Units"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
     summary = (

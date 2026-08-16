@@ -25,6 +25,7 @@ from lark_snapshot_store import (
 )
 from product_data import (
     fulfillment_revenue_frame,
+    order_fulfillment_frame,
     records_from_order_hints,
     revenue_milestone_counts,
     top_record_id_frame,
@@ -262,6 +263,44 @@ def daily_revenue_quantity_chart(frame: pd.DataFrame) -> go.Figure:
         bargap=0.28,
     )
     return figure
+
+
+def daily_fulfillment_frames(
+    performance: pd.DataFrame,
+    total_asins: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Return aligned daily Revenue/Quantity frames for FBM and FBA."""
+    empty = pd.DataFrame(columns=["Date", "Revenue", "Quantity", "Orders"])
+    mapped = order_fulfillment_frame(performance, total_asins)
+    if mapped.empty or "Date" not in mapped:
+        return {"FBM": empty.copy(), "FBA": empty.copy()}
+
+    mapped = mapped.copy()
+    mapped["Date"] = pd.to_datetime(mapped["Date"], errors="coerce")
+    mapped = mapped.dropna(subset=["Date"])
+    for column in ("Revenue", "Units", "Orders"):
+        mapped[column] = pd.to_numeric(mapped[column], errors="coerce").fillna(0)
+    if mapped.empty:
+        return {"FBM": empty.copy(), "FBA": empty.copy()}
+
+    calendar = pd.DataFrame({"Date": sorted(mapped["Date"].unique())})
+    result: dict[str, pd.DataFrame] = {}
+    for fulfillment_type in ("FBM", "FBA"):
+        daily = (
+            mapped[mapped["Fulfill By"].eq(fulfillment_type)]
+            .groupby("Date", as_index=False)
+            .agg(
+                Revenue=("Revenue", "sum"),
+                Quantity=("Units", "sum"),
+                Orders=("Orders", "sum"),
+            )
+        )
+        daily = calendar.merge(daily, on="Date", how="left")
+        daily[["Revenue", "Quantity", "Orders"]] = daily[
+            ["Revenue", "Quantity", "Orders"]
+        ].fillna(0)
+        result[fulfillment_type] = daily.sort_values("Date").reset_index(drop=True)
+    return result
 
 
 def active_store(store_name: str, month: str | None = None) -> dict:
@@ -1150,32 +1189,45 @@ if page.startswith("01"):
 
     left, right = st.columns([2, 1])
     with left:
-        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">DAILY PERFORMANCE</div><h3>Revenue & Quantity theo ngày</h3>', unsafe_allow_html=True)
-        daily_performance = daily_frame(store, selected_month)
-        chart_tab, table_tab = st.tabs(["Chart", "Bảng dữ liệu"])
-        with chart_tab:
-            st.plotly_chart(
-                daily_revenue_quantity_chart(daily_performance),
-                width="stretch",
-                config={"displayModeBar": False},
-            )
-        with table_tab:
-            daily_table = daily_performance[["Date", "Revenue", "Quantity"]].copy()
-            st.dataframe(
-                daily_table,
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "Date": st.column_config.DateColumn("Ngày", format="DD/MM/YYYY"),
-                    "Revenue": st.column_config.NumberColumn(
-                        "Revenue", format="dollar", help="Item Price + Shipping Price"
-                    ),
-                    "Quantity": st.column_config.NumberColumn(
-                        "Quantity", format="%d", help="Tổng Units theo Purchase Date"
-                    ),
-                },
-            )
-            st.caption("Quantity = tổng Units trong Order Report theo Purchase Date.")
+        st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">DAILY PERFORMANCE</div><h3>Revenue & Quantity theo ngày · FBM / FBA</h3>', unsafe_allow_html=True)
+        daily_by_fulfillment = daily_fulfillment_frames(
+            overview_performance,
+            overview_lark["total"] if overview_lark else pd.DataFrame(),
+        )
+        if all(frame.empty for frame in daily_by_fulfillment.values()):
+            st.warning("Chưa có dữ liệu Fulfill By để tách Daily Performance thành FBM và FBA.")
+        else:
+            for fulfillment_type in ("FBM", "FBA"):
+                daily_performance = daily_by_fulfillment[fulfillment_type]
+                st.markdown(f"#### {fulfillment_type}")
+                chart_tab, table_tab = st.tabs(
+                    [f"{fulfillment_type} · Chart", f"{fulfillment_type} · Bảng dữ liệu"]
+                )
+                with chart_tab:
+                    st.plotly_chart(
+                        daily_revenue_quantity_chart(daily_performance),
+                        width="stretch",
+                        config={"displayModeBar": False},
+                    )
+                with table_tab:
+                    daily_table = daily_performance[["Date", "Revenue", "Quantity"]].copy()
+                    st.dataframe(
+                        daily_table,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Date": st.column_config.DateColumn("Ngày", format="DD/MM/YYYY"),
+                            "Revenue": st.column_config.NumberColumn(
+                                "Revenue", format="dollar", help="Item Price + Shipping Price"
+                            ),
+                            "Quantity": st.column_config.NumberColumn(
+                                "Quantity", format="%d", help="Tổng Units theo Purchase Date"
+                            ),
+                        },
+                    )
+                    st.caption(
+                        f"{fulfillment_type} · Quantity = tổng Units theo Purchase Date."
+                    )
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         store_share = (
