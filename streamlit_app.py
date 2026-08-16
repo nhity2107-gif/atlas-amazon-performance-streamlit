@@ -25,7 +25,6 @@ from lark_snapshot_store import (
 )
 from product_data import (
     fulfillment_revenue_frame,
-    order_fulfillment_frame,
     records_from_order_hints,
     revenue_milestone_counts,
     top_record_id_frame,
@@ -271,29 +270,46 @@ def daily_fulfillment_frames(
 ) -> dict[str, pd.DataFrame]:
     """Return aligned daily Revenue/Quantity frames for FBM and FBA."""
     empty = pd.DataFrame(columns=["Date", "Revenue", "Quantity", "Orders"])
-    mapped = order_fulfillment_frame(performance, total_asins)
-    if mapped.empty or "Date" not in mapped:
+    required_order = {"Date", "ASIN", "Revenue", "Orders", "Units"}
+    required_total = {"asin", "record_id", "fulfill_by"}
+    if (
+        performance.empty
+        or total_asins.empty
+        or not required_order.issubset(performance.columns)
+        or not required_total.issubset(total_asins.columns)
+    ):
         return {"FBM": empty.copy(), "FBA": empty.copy()}
 
-    mapped = mapped.copy()
-    mapped["Date"] = pd.to_datetime(mapped["Date"], errors="coerce")
-    mapped = mapped.dropna(subset=["Date"])
-    for column in ("Revenue", "Units", "Orders"):
-        mapped[column] = pd.to_numeric(mapped[column], errors="coerce").fillna(0)
-    if mapped.empty:
+    dated = performance.copy()
+    dated["Date"] = pd.to_datetime(dated["Date"], errors="coerce")
+    dated = dated.dropna(subset=["Date"])
+    if dated.empty:
         return {"FBM": empty.copy(), "FBA": empty.copy()}
 
-    calendar = pd.DataFrame({"Date": sorted(mapped["Date"].unique())})
+    # Reuse the long-standing fulfillment summary function day by day. This
+    # remains compatible with Streamlit Cloud processes that may still have an
+    # older product_data module cached while a new commit is hot-reloaded.
+    daily_parts: list[pd.DataFrame] = []
+    for day, day_orders in dated.groupby("Date", sort=True):
+        day_summary = fulfillment_revenue_frame(day_orders, total_asins)
+        if day_summary.empty:
+            continue
+        day_summary = day_summary.copy()
+        day_summary["Date"] = day
+        daily_parts.append(day_summary)
+
+    calendar = pd.DataFrame({"Date": sorted(dated["Date"].unique())})
+    daily_summary = (
+        pd.concat(daily_parts, ignore_index=True)
+        if daily_parts
+        else pd.DataFrame(columns=["Date", "Fulfill By", "Revenue", "Orders", "Units"])
+    )
     result: dict[str, pd.DataFrame] = {}
     for fulfillment_type in ("FBM", "FBA"):
-        daily = (
-            mapped[mapped["Fulfill By"].eq(fulfillment_type)]
-            .groupby("Date", as_index=False)
-            .agg(
-                Revenue=("Revenue", "sum"),
-                Quantity=("Units", "sum"),
-                Orders=("Orders", "sum"),
-            )
+        daily = daily_summary[
+            daily_summary["Fulfill By"].eq(fulfillment_type)
+        ][["Date", "Revenue", "Units", "Orders"]].rename(
+            columns={"Units": "Quantity"}
         )
         daily = calendar.merge(daily, on="Date", how="left")
         daily[["Revenue", "Quantity", "Orders"]] = daily[
