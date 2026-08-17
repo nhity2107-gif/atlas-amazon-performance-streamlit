@@ -111,11 +111,15 @@ the Lark app, Base and table IDs. The Product page then maps each Record ID to
 Product, Idea By, Managed By, Custom By and Ads By. The real secrets file is
 ignored by Git.
 
-The latest successful Lark sync is persisted under `snapshot/lark/`. Normal
-dashboard visits read this local snapshot without calling Lark. Use the
+The latest successful Lark sync is persisted locally under `snapshot/lark/` and
+published as the encrypted `snapshot/published_lark_snapshot.enc`. Normal
+dashboard visits read this shared snapshot without calling Lark. Use the
 `Cập nhật snapshot Lark · tất cả bảng` button on Team KPI only when fresh data
 is needed. TOTAL ASIN, MRND IDEA and CLIPARTS are saved as one coherent refresh;
-if a refresh fails, the dashboard continues using the previous snapshot.
+if a refresh fails, the dashboard continues using the previous snapshot. The
+local import tool refreshes and republishes this encrypted Lark snapshot whenever
+new Order reports are processed, so Streamlit and another machine use the same
+KPI source. `PUBLISHED_SNAPSHOT_KEY` must match across local and Streamlit Secrets.
 
 Time semantics are intentionally separate: Lark workflow KPI uses the calendar
 date returned by Lark without timezone conversion, while Order, Revenue and

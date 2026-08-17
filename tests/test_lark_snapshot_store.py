@@ -5,13 +5,20 @@ import unittest
 from pathlib import Path
 
 import pandas as pd
+from cryptography.fernet import Fernet
 
-from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
+from lark_snapshot_store import (
+    load_encrypted_lark_snapshot,
+    load_lark_snapshot,
+    save_encrypted_lark_snapshot,
+    save_lark_snapshot,
+)
 
 
 class LarkSnapshotStoreTests(unittest.TestCase):
-    def test_round_trip_preserves_kpi_types_and_metadata(self) -> None:
-        payload = {
+    @staticmethod
+    def sample_payload() -> dict:
+        return {
             "total": pd.DataFrame(
                 [
                     {
@@ -45,15 +52,29 @@ class LarkSnapshotStoreTests(unittest.TestCase):
                 ]
             ),
             "ideas": pd.DataFrame(
-                [{"record_id": "recuABC123", "handover_date": pd.Timestamp("2026-07-31")}]
+                [
+                    {
+                        "record_id": "recuABC123",
+                        "handover_date": pd.Timestamp("2026-07-31"),
+                    }
+                ]
             ),
             "cliparts": pd.DataFrame(
-                [{"employee": "Alice", "created_date": pd.Timestamp("2026-07-31"), "asset_points": 5}]
+                [
+                    {
+                        "employee": "Alice",
+                        "created_date": pd.Timestamp("2026-07-31"),
+                        "asset_points": 5,
+                    }
+                ]
             ),
             "record_counts": {"TOTAL ASIN": 1, "MRND IDEA": 1, "CLIPARTS": 1},
             "field_mapping": {"TOTAL ASIN": {"asin": "ASIN"}},
             "available_fields": {"TOTAL ASIN": ["ASIN"]},
         }
+
+    def test_round_trip_preserves_kpi_types_and_metadata(self) -> None:
+        payload = self.sample_payload()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             save_lark_snapshot(root, payload)
@@ -81,6 +102,24 @@ class LarkSnapshotStoreTests(unittest.TestCase):
             set(restored["snapshot_frames"]),
             {"total", "workflow", "workflow_ideas", "ideas", "cliparts"},
         )
+
+    def test_encrypted_round_trip_and_wrong_key_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "plain"
+            encrypted = Path(temp_dir) / "published.enc"
+            save_lark_snapshot(root, self.sample_payload())
+            key = Fernet.generate_key().decode("utf-8")
+            save_encrypted_lark_snapshot(root, encrypted, key)
+            restored = load_encrypted_lark_snapshot(encrypted, key)
+            wrong_key = Fernet.generate_key().decode("utf-8")
+            rejected = load_encrypted_lark_snapshot(encrypted, wrong_key)
+
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored["record_counts"]["TOTAL ASIN"], 1)
+        self.assertEqual(restored["total"].loc[0, "listing_lead_time"], 4.25)
+        self.assertTrue(restored["total"].loc[0, "ads_launched"])
+        self.assertIsNone(rejected)
 
 
 if __name__ == "__main__":

@@ -18,12 +18,7 @@ from ads_data import (
 )
 from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
-from lark_snapshot_store import (
-    SCHEMA_VERSION as LARK_SNAPSHOT_SCHEMA_VERSION,
-    load_lark_snapshot,
-    save_lark_snapshot,
-    snapshot_version as lark_snapshot_version,
-)
+import lark_snapshot_store as _lark_snapshot_store
 from product_data import (
     fulfillment_revenue_frame,
     records_from_order_hints,
@@ -47,7 +42,13 @@ from team_kpi import (
 
 # Streamlit Cloud hot-reloads the app file but can retain an older imported
 # module in the same process. Reload explicitly so a deployment that changes
-# the target snapshot schema never imports stale target_data functions.
+# a snapshot schema never imports stale module functions.
+_lark_snapshot_store = importlib.reload(_lark_snapshot_store)
+LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
+load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
+load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
+save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
+lark_snapshot_version = _lark_snapshot_store.snapshot_version
 _target_data = importlib.reload(_target_data)
 daily_targets_for_month = _target_data.daily_targets_for_month
 load_fbm_target_snapshot = _target_data.load_fbm_target_snapshot
@@ -57,6 +58,9 @@ target_progress = _target_data.target_progress
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
 PERSISTED_LARK_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "lark"
+PUBLISHED_LARK_SNAPSHOT_PATH = (
+    Path(__file__).with_name("snapshot") / "published_lark_snapshot.enc"
+)
 PERSISTED_ADS_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "ads"
 PUBLISHED_ADS_SNAPSHOT_PATH = (
     Path(__file__).with_name("snapshot") / "published_ads_snapshot.enc"
@@ -506,9 +510,30 @@ def persisted_lark_frames(snapshot_version: int, schema_version: str) -> dict | 
     return load_lark_snapshot(PERSISTED_LARK_SNAPSHOT_DIR)
 
 
+@st.cache_data(show_spinner=False)
+def published_lark_frames(
+    snapshot_version: int,
+    schema_version: str,
+    publish_key: str,
+) -> dict | None:
+    del snapshot_version, schema_version
+    return load_encrypted_lark_snapshot(PUBLISHED_LARK_SNAPSHOT_PATH, publish_key)
+
+
 def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
     version = lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR)
-    saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+    local_saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+    published_version = (
+        PUBLISHED_LARK_SNAPSHOT_PATH.stat().st_mtime_ns
+        if PUBLISHED_LARK_SNAPSHOT_PATH.exists()
+        else 0
+    )
+    published_saved = published_lark_frames(
+        published_version,
+        LARK_SNAPSHOT_SCHEMA_VERSION,
+        secret_value("PUBLISHED_SNAPSHOT_KEY"),
+    )
+    saved = local_saved if local_saved is not None else published_saved
     if saved is not None and not refresh:
         return saved
     try:
