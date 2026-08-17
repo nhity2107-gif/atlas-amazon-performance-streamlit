@@ -137,6 +137,16 @@ st.caption(
     "Nạp report month-to-date trên PC → kiểm tra → sinh snapshot → publish GitHub/Streamlit. "
     "Raw report chỉ lưu tại ổ D và không được đưa lên Git."
 )
+try:
+    shared_publish_key = str(st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")).strip()
+except Exception:
+    shared_publish_key = ""
+if not shared_publish_key:
+    st.warning(
+        "Máy này chưa có PUBLISHED_SNAPSHOT_KEY dùng chung. Hãy copy đúng key từ PC "
+        "hoặc Streamlit Cloud vào .streamlit/secrets.toml; không tạo key mới vì sẽ "
+        "không giải mã được snapshot Ads/Lark hiện tại."
+    )
 
 today = date.today()
 left, right = st.columns(2)
@@ -384,14 +394,18 @@ if "last_build" in st.session_state:
             "Ads snapshot không thay đổi."
         )
         publish_label = f"2 · Mã hóa Lark, kiểm thử và push Order{target_note}"
-    if st.button(publish_label, use_container_width=True):
+    if st.button(
+        publish_label,
+        use_container_width=True,
+        disabled=not shared_publish_key,
+        help=(
+            None
+            if shared_publish_key
+            else "Cần PUBLISHED_SNAPSHOT_KEY giống Streamlit Cloud để mã hóa snapshot."
+        ),
+    ):
         try:
-            publish_key = str(st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")).strip()
-            if not publish_key:
-                raise ValueError(
-                    "Thiếu PUBLISHED_SNAPSHOT_KEY. Chạy scripts/setup_publish_key.py và "
-                    "thêm cùng key vào Streamlit Cloud Secrets trước khi publish."
-                )
+            publish_key = shared_publish_key
             save_encrypted_lark_snapshot(LARK_SNAPSHOT, PUBLISHED_LARK, publish_key)
             if build["ads_updated"]:
                 save_encrypted_ads_snapshot(ADS_SNAPSHOT, PUBLISHED_ADS, publish_key)
