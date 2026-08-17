@@ -138,7 +138,7 @@ def save_encrypted_lark_snapshot(
         cipher = Fernet(key.strip().encode("utf-8"))
     except (TypeError, ValueError) as exc:
         raise LarkSnapshotError(
-            "PUBLISHED_SNAPSHOT_KEY không phải Fernet key hợp lệ."
+            "DASHBOARD_DATA_KEY không phải Fernet key hợp lệ."
         ) from exc
 
     metadata = {

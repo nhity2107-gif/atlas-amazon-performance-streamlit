@@ -278,7 +278,8 @@ của dòng ASIN sau khi lọc ngày.
 - Local Update Tool chạy riêng trên `127.0.0.1:8502`; mặc định chỉ nhận 2 Order.
   Tùy chọn Ads cuối tháng mới hiển thị và bắt buộc 6 Ads report. Vì GitHub public, chỉ
   `snapshot/published_ads_snapshot.enc` đã mã hóa Fernet được phép push;
-  Streamlit giải mã bằng `PUBLISHED_SNAPSHOT_KEY` trong Secrets.
+  Streamlit giải mã bằng `DASHBOARD_DATA_KEY` trong Secrets. Tên cũ
+  `PUBLISHED_SNAPSHOT_KEY` vẫn được hỗ trợ để tương thích ngược.
 
 ## 9. Bảo mật và repository
 

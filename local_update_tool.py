@@ -138,12 +138,16 @@ st.caption(
     "Raw report chỉ lưu tại ổ D và không được đưa lên Git."
 )
 try:
-    shared_publish_key = str(st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")).strip()
+    shared_publish_key = str(st.secrets.get("DASHBOARD_DATA_KEY", "")).strip()
+    if not shared_publish_key:
+        shared_publish_key = str(
+            st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")
+        ).strip()
 except Exception:
     shared_publish_key = ""
 if not shared_publish_key:
     st.warning(
-        "Máy này chưa có PUBLISHED_SNAPSHOT_KEY dùng chung. Hãy copy đúng key từ PC "
+        "Máy này chưa có DASHBOARD_DATA_KEY dùng chung. Hãy copy đúng key từ PC "
         "hoặc Streamlit Cloud vào .streamlit/secrets.toml; không tạo key mới vì sẽ "
         "không giải mã được snapshot Ads/Lark hiện tại."
     )
@@ -401,7 +405,7 @@ if "last_build" in st.session_state:
         help=(
             None
             if shared_publish_key
-            else "Cần PUBLISHED_SNAPSHOT_KEY giống Streamlit Cloud để mã hóa snapshot."
+            else "Cần DASHBOARD_DATA_KEY giống Streamlit Cloud để mã hóa snapshot."
         ),
     ):
         try:

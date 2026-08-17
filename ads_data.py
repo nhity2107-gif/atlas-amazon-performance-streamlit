@@ -621,7 +621,7 @@ def save_encrypted_ads_snapshot(
     try:
         cipher = Fernet(key.strip().encode("utf-8"))
     except (TypeError, ValueError) as exc:
-        raise AdsDataError("PUBLISHED_SNAPSHOT_KEY không phải Fernet key hợp lệ.") from exc
+        raise AdsDataError("DASHBOARD_DATA_KEY không phải Fernet key hợp lệ.") from exc
     payload = {
         "encrypted_schema_version": ENCRYPTED_SCHEMA_VERSION,
         "metadata": {key: value for key, value in snapshot.items() if key != "summary"},

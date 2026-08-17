@@ -467,7 +467,7 @@ def current_ads_snapshot() -> dict | None:
         return local
     return load_encrypted_ads_snapshot(
         PUBLISHED_ADS_SNAPSHOT_PATH,
-        secret_value("PUBLISHED_SNAPSHOT_KEY"),
+        dashboard_data_key(),
     )
 
 
@@ -476,6 +476,13 @@ def secret_value(name: str) -> str:
         return str(st.secrets.get(name, "")).strip()
     except Exception:
         return ""
+
+
+def dashboard_data_key() -> str:
+    """Return the shared snapshot key, preferring the Cloud-facing name."""
+    return secret_value("DASHBOARD_DATA_KEY") or secret_value(
+        "PUBLISHED_SNAPSHOT_KEY"
+    )
 
 
 def lark_config() -> tuple[LarkConfig | None, list[str]]:
@@ -531,7 +538,7 @@ def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
     published_saved = published_lark_frames(
         published_version,
         LARK_SNAPSHOT_SCHEMA_VERSION,
-        secret_value("PUBLISHED_SNAPSHOT_KEY"),
+        dashboard_data_key(),
     )
     saved = local_saved if local_saved is not None else published_saved
     if saved is not None and not refresh:

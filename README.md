@@ -72,7 +72,7 @@ python scripts/setup_publish_key.py
 ```
 
 Open `D:\\Atlas Amazon Performance\\STREAMLIT-CLOUD-SECRET.txt`, then copy its
-`PUBLISHED_SNAPSHOT_KEY` line into Streamlit Cloud App settings
+`DASHBOARD_DATA_KEY` line into Streamlit Cloud App settings
 → Secrets. Never commit the plaintext key or `snapshot/ads/`.
 
 ## Standard local input database
@@ -119,7 +119,8 @@ is needed. TOTAL ASIN, MRND IDEA and CLIPARTS are saved as one coherent refresh;
 if a refresh fails, the dashboard continues using the previous snapshot. The
 local import tool refreshes and republishes this encrypted Lark snapshot whenever
 new Order reports are processed, so Streamlit and another machine use the same
-KPI source. `PUBLISHED_SNAPSHOT_KEY` must match across local and Streamlit Secrets.
+KPI source. `DASHBOARD_DATA_KEY` must match across local and Streamlit Secrets.
+The legacy name `PUBLISHED_SNAPSHOT_KEY` remains supported for older machines.
 
 Time semantics are intentionally separate: Lark workflow KPI uses the calendar
 date returned by Lark without timezone conversion, while Order, Revenue and
