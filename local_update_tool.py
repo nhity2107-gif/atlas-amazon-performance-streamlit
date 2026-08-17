@@ -19,6 +19,7 @@ from ads_data import (
 from lark_data import LarkConfig, fetch_lark_frames
 from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
+from scripts.git_publish import push_with_remote_sync
 import target_data as _target_data
 
 
@@ -415,7 +416,7 @@ if "last_build" in st.session_state:
                 st.info("Snapshot không thay đổi; không cần push.")
             else:
                 run_git("commit", "-m", f"Update live dashboard through {build['as_of']}")
-                run_git("push", "origin", "main")
+                push_with_remote_sync(DASHBOARD_ROOT, publish_files)
                 commit = run_git("rev-parse", "--short", "HEAD").stdout.strip()
                 st.success(f"Đã push commit {commit}. Streamlit sẽ tự redeploy từ main.")
                 st.caption(tests.stderr.strip() or tests.stdout.strip())
