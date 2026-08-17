@@ -47,6 +47,7 @@ _lark_snapshot_store = importlib.reload(_lark_snapshot_store)
 LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
 load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
 load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
+newest_lark_snapshot = _lark_snapshot_store.newest_lark_snapshot
 save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
 lark_snapshot_version = _lark_snapshot_store.snapshot_version
 _target_data = importlib.reload(_target_data)
@@ -540,7 +541,7 @@ def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
         LARK_SNAPSHOT_SCHEMA_VERSION,
         dashboard_data_key(),
     )
-    saved = local_saved if local_saved is not None else published_saved
+    saved = newest_lark_snapshot(local_saved, published_saved)
     if saved is not None and not refresh:
         return saved
     try:

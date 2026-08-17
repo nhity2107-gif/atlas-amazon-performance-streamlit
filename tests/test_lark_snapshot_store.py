@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 from lark_snapshot_store import (
     load_encrypted_lark_snapshot,
     load_lark_snapshot,
+    newest_lark_snapshot,
     save_encrypted_lark_snapshot,
     save_lark_snapshot,
 )
@@ -120,6 +121,18 @@ class LarkSnapshotStoreTests(unittest.TestCase):
         self.assertEqual(restored["total"].loc[0, "listing_lead_time"], 4.25)
         self.assertTrue(restored["total"].loc[0, "ads_launched"])
         self.assertIsNone(rejected)
+
+    def test_newest_snapshot_beats_stale_local_snapshot(self) -> None:
+        local = {"snapshot_updated_at": "2026-08-12T00:51:00+00:00"}
+        published = {"snapshot_updated_at": "2026-08-17T07:17:00+00:00"}
+
+        self.assertIs(newest_lark_snapshot(local, published), published)
+
+    def test_newest_snapshot_handles_missing_candidates(self) -> None:
+        published = {"snapshot_updated_at": "2026-08-17T07:17:00+00:00"}
+
+        self.assertIs(newest_lark_snapshot(None, published), published)
+        self.assertIsNone(newest_lark_snapshot(None, None))
 
 
 if __name__ == "__main__":

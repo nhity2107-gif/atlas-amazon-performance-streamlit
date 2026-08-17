@@ -40,7 +40,9 @@ coverage in `America/Los_Angeles`. Team workflow output is independent: it ends
 on the Vietnam calendar date of the latest coherent Lark refresh. The graphical
 daily tool refreshes all three Lark tables before generating the dashboard; if
 Lark is unavailable it clearly warns that the previous local snapshot is being
-used. Revenue/Orders remain based only on actual Amazon Purchase Dates.
+used. When Cloud has both a runtime-local and a published encrypted Lark
+snapshot, the dashboard selects the one with the newest `updated_at` value.
+Revenue/Orders remain based only on actual Amazon Purchase Dates.
 
 Add `-PublishOrderSnapshot` only when the aggregate Order snapshot should be
 committed and pushed. Raw Order files, the SQLite database and Ads/Lark snapshots

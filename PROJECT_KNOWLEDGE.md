@@ -34,6 +34,9 @@ phải cập nhật cả code, test và tài liệu này.
   refresh snapshot Lark mới nhất. Local Update Tool refresh đủ TOTAL
   ASIN/MRND IDEA/CLIPARTS mỗi lần cập nhật hằng ngày; nếu API lỗi phải cảnh báo
   rõ khi fallback snapshot cũ và dùng ngày cập nhật của snapshot đó.
+- Nếu Streamlit Cloud đồng thời có snapshot Lark runtime cũ và snapshot mã hóa
+  đã publish, luôn chọn snapshot có `updated_at` mới hơn; không ưu tiên mù quáng
+  bản local vì có thể khiến KPI dừng ở ngày cũ.
 - Không dùng ngày Lark để lọc Revenue và không dùng Purchase Time để lọc output
   workflow của Lark.
 

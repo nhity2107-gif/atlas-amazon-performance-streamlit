@@ -37,6 +37,23 @@ class LarkSnapshotError(RuntimeError):
     pass
 
 
+def newest_lark_snapshot(
+    *snapshots: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Choose the newest valid snapshot instead of blindly preferring local state."""
+    valid = [snapshot for snapshot in snapshots if snapshot is not None]
+    if not valid:
+        return None
+
+    def freshness(snapshot: dict[str, Any]) -> pd.Timestamp:
+        updated = pd.to_datetime(
+            snapshot.get("snapshot_updated_at", ""), errors="coerce", utc=True
+        )
+        return updated if pd.notna(updated) else pd.Timestamp.min.tz_localize("UTC")
+
+    return max(valid, key=freshness)
+
+
 def _restore_frames(
     frames: dict[str, pd.DataFrame],
     metadata: dict[str, Any],
