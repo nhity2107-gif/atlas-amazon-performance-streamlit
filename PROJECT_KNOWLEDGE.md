@@ -28,10 +28,12 @@ phải cập nhật cả code, test và tài liệu này.
   `America/Los_Angeles`.
 - Sau khi đổi timezone mới lấy Purchase Date và Purchase Month.
 - Orders, Units và Revenue chỉ được lọc theo Purchase Month Los Angeles.
-- KPI workflow Lark dùng `report_as_of_date` của lần input MTD gần nhất làm ngày
-  cuối kỳ, không dùng Purchase Date cuối cùng (vì ngày không có order vẫn có thể
-  phát sinh task). Local Update Tool refresh đủ TOTAL ASIN/MRND IDEA/CLIPARTS mỗi
-  lần cập nhật hằng ngày; nếu API lỗi phải cảnh báo rõ khi fallback snapshot cũ.
+- Order/Revenue và phạm vi Ads report dùng kỳ báo cáo theo
+  `America/Los_Angeles`; `report_as_of_date` chỉ thuộc hệ thời gian Amazon.
+- KPI workflow Lark độc lập với Order: ngày cuối kỳ là ngày lịch Việt Nam của lần
+  refresh snapshot Lark mới nhất. Local Update Tool refresh đủ TOTAL
+  ASIN/MRND IDEA/CLIPARTS mỗi lần cập nhật hằng ngày; nếu API lỗi phải cảnh báo
+  rõ khi fallback snapshot cũ và dùng ngày cập nhật của snapshot đó.
 - Không dùng ngày Lark để lọc Revenue và không dùng Purchase Time để lọc output
   workflow của Lark.
 

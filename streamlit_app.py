@@ -1740,15 +1740,10 @@ else:
             report_start = performance["Date"].min().normalize()
             report_end = performance["Date"].max().normalize()
             window_start = pd.Timestamp(f"{selected_month}-01")
-            window_end = workflow_kpi_window_end(
-                selected_month,
-                order_snapshot_metadata,
-                report_end,
-            )
             st.success(
                 f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
-                        f"Purchase Date Los Angeles hiện có {report_start:%d/%m/%Y}–"
-                        f"{report_end:%d/%m/%Y}; KPI workflow tính đến {window_end:%d/%m/%Y}."
+                f"Order/Revenue Los Angeles hiện có {report_start:%d/%m/%Y}–"
+                f"{report_end:%d/%m/%Y}."
             )
             refresh_lark = st.button(
                 "Cập nhật snapshot Lark · tất cả bảng",
@@ -1765,6 +1760,11 @@ else:
                 )
                 with st.spinner(spinner_text):
                     lark = latest_lark_frames(config, refresh=refresh_lark)
+                window_end = workflow_kpi_window_end(
+                    selected_month,
+                    lark.get("snapshot_updated_at", ""),
+                    report_end,
+                )
                 if lark.get("refresh_error"):
                     st.warning(
                         "Không cập nhật được Lark API; dashboard tiếp tục dùng snapshot gần nhất."
@@ -1778,6 +1778,10 @@ else:
                         st.caption(
                             f"Snapshot Lark cập nhật lần cuối: {updated_at:%d/%m/%Y %H:%M}"
                         )
+                st.caption(
+                    "KPI output Lark dùng ngày lịch Lark đến lần cập nhật mới nhất: "
+                    f"{window_start:%d/%m/%Y}–{window_end:%d/%m/%Y}."
+                )
                 order_updated_at = pd.to_datetime(
                     order_snapshot_metadata.get("source_updated_at")
                     or order_snapshot_metadata.get("updated_at"),

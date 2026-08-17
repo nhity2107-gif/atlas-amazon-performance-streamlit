@@ -29,6 +29,7 @@ from target_data import (
     target_for_month,
     target_progress,
 )
+from team_kpi import workflow_kpi_window_end
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -169,7 +170,12 @@ def export(month: str, output: Path) -> None:
     records = attribution["records"]
     attributed = attribution["attributed_asins"]
     start = pd.Timestamp(f"{month}-01")
-    end = start + pd.offsets.MonthEnd(1)
+    order_end = performance["Date"].max().normalize()
+    end = workflow_kpi_window_end(
+        month,
+        lark.get("snapshot_updated_at", ""),
+        order_end,
+    )
     cohort_start = (start - pd.DateOffset(months=1)).replace(day=20)
 
     revenue = float(performance["Revenue"].sum())

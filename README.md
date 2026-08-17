@@ -35,12 +35,12 @@ cancellations and omitted rows without double counting. Ads imports replace the
 same Store + Month snapshot. The dashboard reads the saved snapshots, exposes a
 global month selector and displays the latest covered Order/Ads date.
 
-`AsOfDate` is also persisted as `report_as_of_date`. Team workflow output uses
-this input date instead of the last Purchase Date (a day with no orders no longer
-shortens the KPI window). The graphical daily tool refreshes all three Lark
-tables before generating the dashboard; if Lark is unavailable it clearly warns
-that the previous local snapshot is being used. Revenue/Orders remain based only
-on actual Amazon Purchase Dates.
+`AsOfDate` is persisted as `report_as_of_date` for Order/Revenue and Ads report
+coverage in `America/Los_Angeles`. Team workflow output is independent: it ends
+on the Vietnam calendar date of the latest coherent Lark refresh. The graphical
+daily tool refreshes all three Lark tables before generating the dashboard; if
+Lark is unavailable it clearly warns that the previous local snapshot is being
+used. Revenue/Orders remain based only on actual Amazon Purchase Dates.
 
 Add `-PublishOrderSnapshot` only when the aggregate Order snapshot should be
 committed and pushed. Raw Order files, the SQLite database and Ads/Lark snapshots
