@@ -8,6 +8,7 @@ import pandas as pd
 from cryptography.fernet import Fernet
 
 from ads_data import (
+    ads_fulfillment_summary,
     build_ads_employee_summary,
     build_ads_employee_summary_from_reports,
     load_ads_snapshot,
@@ -187,6 +188,12 @@ class AdsDataTests(unittest.TestCase):
         fbm, _ = select_ads_summary(snapshot, "2026-07", "All Stores", fbm_only=True)
         self.assertEqual(fbm["Nhân sự"].tolist(), ["Owner A"])
         self.assertEqual(fbm.iloc[0]["Ads_Spend"], 100)
+        fulfillment = ads_fulfillment_summary(
+            snapshot, "2026-07", "All Stores"
+        ).set_index("Fulfill By")
+        self.assertEqual(fulfillment.loc["FBM", "Ads_Spend"], 100)
+        self.assertEqual(fulfillment.loc["FBA", "Ads_Spend"], 30)
+        self.assertEqual(fulfillment["Ads_Spend"].sum(), 130)
 
     def test_support_transfer_is_separate_and_preserves_totals(self) -> None:
         products = pd.DataFrame(

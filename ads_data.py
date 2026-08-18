@@ -5,7 +5,7 @@ from io import StringIO
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Iterable
 import unicodedata
 
 import pandas as pd
@@ -737,3 +737,43 @@ def select_ads_summary(
         combined["Ads_Sales"].where(combined["Ads_Sales"].ne(0))
     )
     return combined[SUMMARY_COLUMNS].sort_values("Ads_Spend", ascending=False), imports
+
+
+def ads_fulfillment_summary(
+    snapshot: dict[str, Any] | None,
+    month: str,
+    store: str,
+) -> pd.DataFrame:
+    """Reconcile published Ads totals into FBM and FBA rows."""
+
+    columns = ["Fulfill By", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"]
+    complete, _ = select_ads_summary(snapshot, month, store)
+    fbm, _ = select_ads_summary(snapshot, month, store, fbm_only=True)
+    if complete.empty:
+        return pd.DataFrame(columns=columns)
+
+    def totals(frame: pd.DataFrame) -> dict[str, float]:
+        return {
+            metric: float(
+                pd.to_numeric(frame[metric], errors="coerce").fillna(0).sum()
+            )
+            for metric in ("Ads_Spend", "Ads_Sales", "Ads_Orders")
+        }
+
+    complete_totals = totals(complete)
+    fbm_totals = totals(fbm)
+    fba_totals = {
+        metric: max(0.0, complete_totals[metric] - fbm_totals[metric])
+        for metric in complete_totals
+    }
+    rows = []
+    for fulfillment, metrics in (("FBM", fbm_totals), ("FBA", fba_totals)):
+        sales = metrics["Ads_Sales"]
+        rows.append(
+            {
+                "Fulfill By": fulfillment,
+                **metrics,
+                "ACOS": metrics["Ads_Spend"] / sales if sales else pd.NA,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)

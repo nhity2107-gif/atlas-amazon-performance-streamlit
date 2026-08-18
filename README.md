@@ -138,7 +138,8 @@ Team KPI is intentionally FBM-only. All employee Order-derived metrics
 filter to `Fulfill By = FBM`. Employee Ads KPI uses separate FBM-only Spend,
 Sales and Orders fields, so FBA is excluded even when a campaign is assigned to
 Support or an execution marker. Overview and aggregate Ads Performance continue
-to show FBA + FBM for store reconciliation.
+to reconcile the total, while Ads Performance displays separate FBM and FBA
+Spend, Sales, Orders and ACOS rows.
 
 ## Local Ads allocation
 

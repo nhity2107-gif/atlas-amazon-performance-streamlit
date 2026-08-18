@@ -39,6 +39,7 @@ from team_kpi import (
 # modules in the same process. Reload explicitly so a deployment that changes
 # a snapshot schema never imports stale module functions.
 _ads_data = importlib.reload(importlib.import_module("ads_data"))
+ads_fulfillment_summary = _ads_data.ads_fulfillment_summary
 load_ads_snapshot = _ads_data.load_ads_snapshot
 load_encrypted_ads_snapshot_with_keys = (
     _ads_data.load_encrypted_ads_snapshot_with_keys
@@ -1573,6 +1574,9 @@ elif page.startswith("02"):
 
 elif page.startswith("03"):
     ads, type_performance, live_ads_imports = live_ads_performance(selected_month, store)
+    ads_by_fulfillment = ads_fulfillment_summary(
+        current_ads_snapshot(), selected_month, store
+    )
     if not live_ads_imports:
         st.warning(
             "Chưa có Ads snapshot month-to-date khớp tháng/store đang chọn. "
@@ -1593,7 +1597,7 @@ elif page.startswith("03"):
     cvr = ads["orders"] / ads["clicks"] if ads["clicks"] else pd.NA
     cols = st.columns(4)
     cols[0].metric(
-        "Ad spend", money(ads["spend"]),
+        "Total Ad spend", money(ads["spend"]),
         f"{tacos:.1%} TACOS" if pd.notna(tacos) else "TACOS N/A",
     )
     sales_share = ads["sales"] / data["revenue"] if data["revenue"] else pd.NA
@@ -1606,9 +1610,43 @@ elif page.startswith("03"):
         f"ROAS {roas:.2f}" if pd.notna(roas) else "ROAS N/A",
     )
     cols[3].metric(
-        "Ad orders", f'{int(ads["orders"]):,}',
+        "Total Ad orders", f'{int(ads["orders"]):,}',
         f"{cvr:.1%} CVR" if pd.notna(cvr) else "CVR N/A",
     )
+    if not ads_by_fulfillment.empty:
+        st.markdown(
+            '<div class="atlas-card"><div class="atlas-eyebrow">ADS BY FULFILLMENT</div>'
+            '<h3>Tách Ads · FBM / FBA</h3></div>',
+            unsafe_allow_html=True,
+        )
+        fulfillment_index = ads_by_fulfillment.set_index("Fulfill By")
+        for fulfillment_type in ("FBM", "FBA"):
+            row = fulfillment_index.loc[fulfillment_type]
+            fulfillment_cols = st.columns(4)
+            fulfillment_cols[0].metric(
+                f"{fulfillment_type} Ads Spend", money(float(row["Ads_Spend"]))
+            )
+            fulfillment_cols[1].metric(
+                f"{fulfillment_type} Ads Sales", money(float(row["Ads_Sales"]))
+            )
+            fulfillment_cols[2].metric(
+                f"{fulfillment_type} ACOS",
+                f'{float(row["ACOS"]):.1%}' if pd.notna(row["ACOS"]) else "N/A",
+            )
+            fulfillment_cols[3].metric(
+                f"{fulfillment_type} Ads Orders", f'{int(row["Ads_Orders"]):,}'
+            )
+        st.dataframe(
+            ads_by_fulfillment,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Orders": st.column_config.NumberColumn(format="%d"),
+                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+            },
+        )
     funnel = pd.DataFrame(
         {"Stage": ["Impressions", "Clicks", "PPC Orders"], "Volume": [ads["impressions"], ads["clicks"], ads["orders"]]}
     )

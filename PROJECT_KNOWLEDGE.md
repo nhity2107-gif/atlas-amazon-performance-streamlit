@@ -216,6 +216,8 @@ của dòng ASIN sau khi lọc ngày.
   đang bị mark nhầm `FBM` nhưng phải được xử lý là `FBA`. Override này áp dụng
   đồng nhất cho phân bổ Ads, TACOS và Revenue FBA/FBM cho đến khi Lark được sửa.
 - Việc phân bổ phải bảo toàn tổng Spend, Sales và Orders của cả ba report.
+- Tab Ads Performance hiển thị riêng FBM và FBA cho Spend, Sales, Orders và ACOS;
+  tổng hai nhóm phải khớp tuyệt đối với toàn bộ Ads report.
 
 ### Revenue milestone theo ownership
 
