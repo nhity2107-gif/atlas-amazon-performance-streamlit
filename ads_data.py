@@ -663,6 +663,30 @@ def load_encrypted_ads_snapshot(
     return {"summary": summary, **metadata}
 
 
+def load_encrypted_ads_snapshot_with_keys(
+    path: Path,
+    keys: Iterable[str],
+) -> dict[str, Any] | None:
+    """Load a published snapshot with any configured shared-key alias.
+
+    Some existing Streamlit deployments still contain both the legacy
+    ``PUBLISHED_SNAPSHOT_KEY`` and the newer ``DASHBOARD_DATA_KEY``. Trying all
+    distinct values lets a snapshot created by either configured machine be
+    read without exposing or rotating the keys.
+    """
+
+    attempted: set[str] = set()
+    for key in keys:
+        normalized = str(key or "").strip()
+        if not normalized or normalized in attempted:
+            continue
+        attempted.add(normalized)
+        snapshot = load_encrypted_ads_snapshot(path, normalized)
+        if snapshot is not None:
+            return snapshot
+    return None
+
+
 def select_ads_summary(
     snapshot: dict[str, Any] | None,
     month: str,

@@ -12,6 +12,7 @@ from ads_data import (
     build_ads_employee_summary_from_reports,
     load_ads_snapshot,
     load_encrypted_ads_snapshot,
+    load_encrypted_ads_snapshot_with_keys,
     save_ads_snapshot,
     save_encrypted_ads_snapshot,
     select_ads_summary,
@@ -46,6 +47,17 @@ class AdsDataTests(unittest.TestCase):
             self.assertEqual(restored["summary"].iloc[0]["Nhân sự"], "Owner A")
             wrong_key = Fernet.generate_key().decode("utf-8")
             self.assertIsNone(load_encrypted_ads_snapshot(encrypted, wrong_key))
+
+            restored_with_fallback = load_encrypted_ads_snapshot_with_keys(
+                encrypted,
+                [wrong_key, "", wrong_key, key],
+            )
+            self.assertIsNotNone(restored_with_fallback)
+            assert restored_with_fallback is not None
+            self.assertEqual(
+                restored_with_fallback["summary"].iloc[0]["Nhân sự"],
+                "Owner A",
+            )
 
     def test_any_campaign_containing_support_maps_to_nhi_support(self) -> None:
         reports = [pd.DataFrame([

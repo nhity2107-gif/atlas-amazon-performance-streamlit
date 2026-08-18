@@ -10,12 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from ads_data import (
-    load_ads_snapshot,
-    load_encrypted_ads_snapshot,
-    normalize_person,
-    select_ads_summary,
-)
+import ads_data as _ads_data
 from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
 import lark_snapshot_store as _lark_snapshot_store
@@ -40,9 +35,16 @@ from team_kpi import (
 )
 
 
-# Streamlit Cloud hot-reloads the app file but can retain an older imported
-# module in the same process. Reload explicitly so a deployment that changes
+# Streamlit Cloud hot-reloads the app file but can retain older imported
+# modules in the same process. Reload explicitly so a deployment that changes
 # a snapshot schema never imports stale module functions.
+_ads_data = importlib.reload(_ads_data)
+load_ads_snapshot = _ads_data.load_ads_snapshot
+load_encrypted_ads_snapshot_with_keys = (
+    _ads_data.load_encrypted_ads_snapshot_with_keys
+)
+normalize_person = _ads_data.normalize_person
+select_ads_summary = _ads_data.select_ads_summary
 _lark_snapshot_store = importlib.reload(_lark_snapshot_store)
 LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
 load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
@@ -466,9 +468,9 @@ def current_ads_snapshot() -> dict | None:
     local = load_ads_snapshot(PERSISTED_ADS_SNAPSHOT_DIR)
     if local is not None:
         return local
-    return load_encrypted_ads_snapshot(
+    return load_encrypted_ads_snapshot_with_keys(
         PUBLISHED_ADS_SNAPSHOT_PATH,
-        dashboard_data_key(),
+        dashboard_data_keys(),
     )
 
 
@@ -481,9 +483,18 @@ def secret_value(name: str) -> str:
 
 def dashboard_data_key() -> str:
     """Return the shared snapshot key, preferring the Cloud-facing name."""
-    return secret_value("DASHBOARD_DATA_KEY") or secret_value(
-        "PUBLISHED_SNAPSHOT_KEY"
+    keys = dashboard_data_keys()
+    return keys[0] if keys else ""
+
+
+def dashboard_data_keys() -> tuple[str, ...]:
+    """Return every distinct shared key configured under current or legacy names."""
+
+    values = (
+        secret_value("DASHBOARD_DATA_KEY"),
+        secret_value("PUBLISHED_SNAPSHOT_KEY"),
     )
+    return tuple(dict.fromkeys(value for value in values if value))
 
 
 def lark_config() -> tuple[LarkConfig | None, list[str]]:
