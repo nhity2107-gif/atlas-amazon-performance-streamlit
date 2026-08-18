@@ -1861,6 +1861,9 @@ else:
                 ads_summary, ads_imports = select_ads_summary(
                     ads_snapshot, selected_month, store, fbm_only=True
                 )
+                ads_fba_kpi_preview = ads_fba_employee_summary(
+                    ads_snapshot, selected_month, store
+                )
                 ads_snapshot_matches = not ads_summary.empty
                 records = attribution["records"]
                 tables = employee_kpi_tables(
@@ -2188,6 +2191,31 @@ else:
                                     "PD_Check_Days": st.column_config.NumberColumn(format="%.2f"),
                                 },
                             )
+                            if title.startswith("Ads"):
+                                st.markdown("#### Ads FBA · đối soát riêng theo nhân sự")
+                                st.caption(
+                                    "Map theo ASIN → TOTAL ASIN → Custom By. "
+                                    "Nhi-FBA và Linh-FBA không được cộng vào Team KPI FBM phía trên."
+                                )
+                                fba_display = ads_fba_kpi_preview.copy()
+                                for money_column in ("Ads_Spend", "Ads_Sales"):
+                                    fba_display[money_column] = fba_display[money_column].map(
+                                        lambda value: f"${float(value):,.2f}"
+                                    )
+                                fba_display["ASINs"] = (
+                                    fba_display["ASINs"].fillna(0).round().astype(int)
+                                )
+                                fba_display["Ads_Orders"] = (
+                                    fba_display["Ads_Orders"].fillna(0).round().astype(int)
+                                )
+                                fba_display["ACOS"] = fba_display["ACOS"].map(
+                                    lambda value: "N/A" if pd.isna(value) else f"{float(value):.1%}"
+                                )
+                                st.dataframe(
+                                    fba_display,
+                                    hide_index=True,
+                                    width="stretch",
+                                )
 
                 with st.expander("Field diagnostics"):
                     st.json(
