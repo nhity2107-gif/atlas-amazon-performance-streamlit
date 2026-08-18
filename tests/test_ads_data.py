@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 
 from ads_data import (
     ads_fulfillment_summary,
+    ads_fba_employee_summary,
     build_ads_employee_summary,
     build_ads_employee_summary_from_reports,
     load_ads_snapshot,
@@ -171,10 +172,10 @@ class AdsDataTests(unittest.TestCase):
         indexed = summary.set_index("Nhân sự")
 
         self.assertEqual(indexed.loc["Owner A", "Ads_Spend"], 100)
-        self.assertEqual(indexed.loc["Nhi-Support", "Ads_Spend"], 10)
+        self.assertEqual(indexed.loc["Nhi-FBA", "Ads_Spend"], 10)
         self.assertEqual(indexed.loc["Linh-FBA", "Ads_Spend"], 20)
         self.assertEqual(indexed.loc["Owner A", "FBM_Ads_Spend"], 100)
-        self.assertEqual(indexed.loc["Nhi-Support", "FBM_Ads_Spend"], 0)
+        self.assertEqual(indexed.loc["Nhi-FBA", "FBM_Ads_Spend"], 0)
         self.assertEqual(indexed.loc["Linh-FBA", "FBM_Ads_Spend"], 0)
         self.assertAlmostEqual(summary["Ads_Spend"].sum(), 130)
         self.assertAlmostEqual(summary["FBM_Ads_Spend"].sum(), 100)
@@ -194,6 +195,12 @@ class AdsDataTests(unittest.TestCase):
         self.assertEqual(fulfillment.loc["FBM", "Ads_Spend"], 100)
         self.assertEqual(fulfillment.loc["FBA", "Ads_Spend"], 30)
         self.assertEqual(fulfillment["Ads_Spend"].sum(), 130)
+        fba_people = ads_fba_employee_summary(
+            snapshot, "2026-07", "All Stores"
+        ).set_index("Nhân sự")
+        self.assertEqual(fba_people.loc["Nhi-FBA", "Ads_Spend"], 10)
+        self.assertEqual(fba_people.loc["Linh-FBA", "Ads_Spend"], 20)
+        self.assertEqual(fba_people["Ads_Spend"].sum(), 30)
 
     def test_support_transfer_is_separate_and_preserves_totals(self) -> None:
         products = pd.DataFrame(

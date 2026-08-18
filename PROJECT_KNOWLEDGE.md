@@ -210,13 +210,16 @@ của dòng ASIN sau khi lọc ngày.
   khỏi Ads By gốc nhưng tổng report phải được bảo toàn.
 - FBA phải lấy từ TOTAL ASIN `Fulfill By = FBA`, không suy ra từ hậu tố product
   trong Ads report. Ownership FBA lấy từ `Custom By`: `Trương Ý Nhi` →
-  `Nhi-FBA`; `Phương Linh/MRnD` → `Linh-FBA`.
+  `Nhi-FBA`; `Phương Linh/MRnD` → `Linh-FBA`. Ownership FBA được ưu tiên hơn
+  marker Support/LINH/HIEU/HA trong tên campaign để mọi Ads FBA luôn nằm đúng
+  một trong hai hàng FBA và không lọt vào KPI FBM.
 - Hai correction đã xác nhận trong TOTAL ASIN: `B0F1XZT333` và `B0F1XPZ1JX`
   đang bị mark nhầm `FBM` nhưng phải được xử lý là `FBA`. Override này áp dụng
   đồng nhất cho phân bổ Ads, TACOS và Revenue FBA/FBM cho đến khi Lark được sửa.
 - Việc phân bổ phải bảo toàn tổng Spend, Sales và Orders của cả ba report.
 - Tab Ads Performance hiển thị riêng FBM và FBA cho Spend, Sales, Orders và ACOS;
-  tổng hai nhóm phải khớp tuyệt đối với toàn bộ Ads report.
+  tổng hai nhóm phải khớp tuyệt đối với toàn bộ Ads report. Bên dưới có bảng
+  FBA ownership riêng gồm đủ `Nhi-FBA` và `Linh-FBA` (kể cả khi một hàng bằng 0).
 
 ### Revenue milestone theo ownership
 

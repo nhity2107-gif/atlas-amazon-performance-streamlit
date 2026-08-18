@@ -39,6 +39,7 @@ from team_kpi import (
 # a snapshot schema never imports stale module functions.
 _ads_data = importlib.reload(importlib.import_module("ads_data"))
 ads_fulfillment_summary = _ads_data.ads_fulfillment_summary
+ads_fba_employee_summary = _ads_data.ads_fba_employee_summary
 load_ads_snapshot = _ads_data.load_ads_snapshot
 load_encrypted_ads_snapshot_with_keys = (
     _ads_data.load_encrypted_ads_snapshot_with_keys
@@ -1562,6 +1563,9 @@ elif page.startswith("03"):
     ads_by_fulfillment = ads_fulfillment_summary(
         current_ads_snapshot(), selected_month, store
     )
+    ads_fba_by_employee = ads_fba_employee_summary(
+        current_ads_snapshot(), selected_month, store
+    )
     if not live_ads_imports:
         st.warning(
             "Chưa có Ads snapshot month-to-date khớp tháng/store đang chọn. "
@@ -1626,6 +1630,26 @@ elif page.startswith("03"):
             hide_index=True,
             width="stretch",
             column_config={
+                "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Orders": st.column_config.NumberColumn(format="%d"),
+                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+            },
+        )
+        st.markdown(
+            '<div class="atlas-card"><div class="atlas-eyebrow">FBA OWNERSHIP</div>'
+            '<h3>Ads FBA theo nhân sự</h3>'
+            '<div class="atlas-note">Map theo ASIN → TOTAL ASIN → Custom By: '
+            'Trương Ý Nhi = Nhi-FBA; Phương Linh/MRnD = Linh-FBA. '
+            'Các số liệu này không tính vào Team KPI FBM.</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            ads_fba_by_employee,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "ASINs": st.column_config.NumberColumn(format="%d"),
                 "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
                 "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
                 "Ads_Orders": st.column_config.NumberColumn(format="%d"),

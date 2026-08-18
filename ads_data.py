@@ -224,7 +224,13 @@ def build_ads_employee_summary_from_reports(
         )
 
     rows["Nhân sự"] = rows["ads_by"].fillna("").astype(str).str.strip()
-    support_mask = rows["Campaign name"].str.contains(SUPPORT_PATTERN, na=False)
+    catalog_fba_mask = rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
+    # Fulfillment ownership has priority over campaign execution markers. Every
+    # FBA row must reconcile to Nhi-FBA or Linh-FBA and never leak into FBM KPI.
+    support_mask = (
+        rows["Campaign name"].str.contains(SUPPORT_PATTERN, na=False)
+        & ~catalog_fba_mask
+    )
     rows.loc[support_mask, "Nhân sự"] = "Nhi-Support"
     execution_masks: dict[str, pd.Series] = {}
     assigned_execution = support_mask.copy()
@@ -232,13 +238,13 @@ def build_ads_employee_summary_from_reports(
         marker_mask = (
             rows["Campaign name"].str.contains(pattern, na=False)
             & ~assigned_execution
+            & ~catalog_fba_mask
         )
         rows.loc[marker_mask, "Nhân sự"] = assignee
         execution_masks[assignee] = marker_mask
         assigned_execution |= marker_mask
 
-    catalog_fba_mask = rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
-    fba_mask = catalog_fba_mask & ~assigned_execution
+    fba_mask = catalog_fba_mask
     normalized_custom = rows.loc[fba_mask, "custom_by"].fillna("").map(normalize_person)
     rows.loc[fba_mask, "Nhân sự"] = ""
     rows.loc[
@@ -777,3 +783,30 @@ def ads_fulfillment_summary(
             }
         )
     return pd.DataFrame(rows, columns=columns)
+
+
+def ads_fba_employee_summary(
+    snapshot: dict[str, Any] | None,
+    month: str,
+    store: str,
+) -> pd.DataFrame:
+    """Return FBA Ads metrics split between the two FBA assignees."""
+
+    columns = ["Nhân sự", "ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"]
+    complete, _ = select_ads_summary(snapshot, month, store)
+    owners = pd.DataFrame({"Nhân sự": ["Nhi-FBA", "Linh-FBA"]})
+    if complete.empty:
+        result = owners.copy()
+        for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders"):
+            result[column] = 0.0
+    else:
+        fba = complete.loc[
+            complete["Nhân sự"].fillna("").astype(str).isin(owners["Nhân sự"])
+        ].copy()
+        result = owners.merge(fba.drop(columns=["ACOS"], errors="ignore"), on="Nhân sự", how="left")
+        for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders"):
+            result[column] = pd.to_numeric(result[column], errors="coerce").fillna(0)
+    result["ACOS"] = result["Ads_Spend"].div(
+        result["Ads_Sales"].where(result["Ads_Sales"].ne(0))
+    )
+    return result[columns]
