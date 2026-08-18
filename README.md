@@ -35,12 +35,14 @@ cancellations and omitted rows without double counting. Ads imports replace the
 same Store + Month snapshot. The dashboard reads the saved snapshots, exposes a
 global month selector and displays the latest covered Order/Ads date.
 
-`AsOfDate` is also persisted as `report_as_of_date`. Team workflow output uses
-this input date instead of the last Purchase Date (a day with no orders no longer
-shortens the KPI window). The graphical daily tool refreshes all three Lark
-tables before generating the dashboard; if Lark is unavailable it clearly warns
-that the previous local snapshot is being used. Revenue/Orders remain based only
-on actual Amazon Purchase Dates.
+`AsOfDate` is persisted as `report_as_of_date` for Order/Revenue and Ads report
+coverage in `America/Los_Angeles`. Team workflow output is independent: it ends
+on the Vietnam calendar date of the latest coherent Lark refresh. The graphical
+daily tool refreshes all three Lark tables before generating the dashboard; if
+Lark is unavailable it clearly warns that the previous local snapshot is being
+used. When Cloud has both a runtime-local and a published encrypted Lark
+snapshot, the dashboard selects the one with the newest `updated_at` value.
+Revenue/Orders remain based only on actual Amazon Purchase Dates.
 
 Add `-PublishOrderSnapshot` only when the aggregate Order snapshot should be
 committed and pushed. Raw Order files, the SQLite database and Ads/Lark snapshots
@@ -72,7 +74,7 @@ python scripts/setup_publish_key.py
 ```
 
 Open `D:\\Atlas Amazon Performance\\STREAMLIT-CLOUD-SECRET.txt`, then copy its
-`PUBLISHED_SNAPSHOT_KEY` line into Streamlit Cloud App settings
+`DASHBOARD_DATA_KEY` line into Streamlit Cloud App settings
 → Secrets. Never commit the plaintext key or `snapshot/ads/`.
 
 ## Standard local input database
@@ -111,11 +113,16 @@ the Lark app, Base and table IDs. The Product page then maps each Record ID to
 Product, Idea By, Managed By, Custom By and Ads By. The real secrets file is
 ignored by Git.
 
-The latest successful Lark sync is persisted under `snapshot/lark/`. Normal
-dashboard visits read this local snapshot without calling Lark. Use the
+The latest successful Lark sync is persisted locally under `snapshot/lark/` and
+published as the encrypted `snapshot/published_lark_snapshot.enc`. Normal
+dashboard visits read this shared snapshot without calling Lark. Use the
 `Cập nhật snapshot Lark · tất cả bảng` button on Team KPI only when fresh data
 is needed. TOTAL ASIN, MRND IDEA and CLIPARTS are saved as one coherent refresh;
-if a refresh fails, the dashboard continues using the previous snapshot.
+if a refresh fails, the dashboard continues using the previous snapshot. The
+local import tool refreshes and republishes this encrypted Lark snapshot whenever
+new Order reports are processed, so Streamlit and another machine use the same
+KPI source. `DASHBOARD_DATA_KEY` must match across local and Streamlit Secrets.
+The legacy name `PUBLISHED_SNAPSHOT_KEY` remains supported for older machines.
 
 Time semantics are intentionally separate: Lark workflow KPI uses the calendar
 date returned by Lark without timezone conversion, while Order, Revenue and

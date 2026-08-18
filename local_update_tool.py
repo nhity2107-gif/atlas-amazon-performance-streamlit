@@ -17,12 +17,16 @@ from ads_data import (
     upsert_ads_snapshot,
 )
 from lark_data import LarkConfig, fetch_lark_frames
-from lark_snapshot_store import load_lark_snapshot, save_lark_snapshot
+import lark_snapshot_store as _lark_snapshot_store
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
 from scripts.git_publish import push_with_remote_sync
 import target_data as _target_data
 
 
+_lark_snapshot_store = importlib.reload(_lark_snapshot_store)
+load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
+save_encrypted_lark_snapshot = _lark_snapshot_store.save_encrypted_lark_snapshot
+save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
 _target_data = importlib.reload(_target_data)
 read_fbm_target_workbook = _target_data.read_fbm_target_workbook
 save_fbm_target_snapshot = _target_data.save_fbm_target_snapshot
@@ -46,6 +50,7 @@ ORDER_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "dashboard_snapshot.csv"
 LARK_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "lark"
 ADS_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "ads"
 PUBLISHED_ADS = DASHBOARD_ROOT / "snapshot" / "published_ads_snapshot.enc"
+PUBLISHED_LARK = DASHBOARD_ROOT / "snapshot" / "published_lark_snapshot.enc"
 FBM_TARGET_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "fbm_target.csv"
 
 
@@ -132,6 +137,20 @@ st.caption(
     "Nạp report month-to-date trên PC → kiểm tra → sinh snapshot → publish GitHub/Streamlit. "
     "Raw report chỉ lưu tại ổ D và không được đưa lên Git."
 )
+try:
+    shared_publish_key = str(st.secrets.get("DASHBOARD_DATA_KEY", "")).strip()
+    if not shared_publish_key:
+        shared_publish_key = str(
+            st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")
+        ).strip()
+except Exception:
+    shared_publish_key = ""
+if not shared_publish_key:
+    st.warning(
+        "Máy này chưa có DASHBOARD_DATA_KEY dùng chung. Hãy copy đúng key từ PC "
+        "hoặc Streamlit Cloud vào .streamlit/secrets.toml; không tạo key mới vì sẽ "
+        "không giải mã được snapshot Ads/Lark hiện tại."
+    )
 
 today = date.today()
 left, right = st.columns(2)
@@ -368,25 +387,31 @@ if "last_build" in st.session_state:
     st.markdown("### Publish lên Streamlit")
     if build["ads_updated"]:
         st.warning(
-            "Repository GitHub là public. Ads snapshot sẽ được mã hóa trước khi commit; "
-            "không publish raw report, database, Lark snapshot hoặc Ads plaintext."
+            "Repository GitHub là public. Ads và Lark snapshot sẽ được mã hóa trước khi "
+            "commit; không publish raw report, database hoặc dữ liệu plaintext."
         )
-        publish_label = "2 · Mã hóa Ads, kiểm thử và push"
+        publish_label = "2 · Mã hóa Ads + Lark, kiểm thử và push"
     else:
         target_note = " và FBM target" if build.get("target_updated") else ""
         st.info(
-            f"Lần cập nhật này publish Order snapshot{target_note}; Ads snapshot không thay đổi."
+            f"Lần cập nhật này publish Order + Lark snapshot{target_note}; "
+            "Ads snapshot không thay đổi."
         )
-        publish_label = f"2 · Kiểm thử và push Order{target_note}"
-    if st.button(publish_label, use_container_width=True):
+        publish_label = f"2 · Mã hóa Lark, kiểm thử và push Order{target_note}"
+    if st.button(
+        publish_label,
+        use_container_width=True,
+        disabled=not shared_publish_key,
+        help=(
+            None
+            if shared_publish_key
+            else "Cần DASHBOARD_DATA_KEY giống Streamlit Cloud để mã hóa snapshot."
+        ),
+    ):
         try:
+            publish_key = shared_publish_key
+            save_encrypted_lark_snapshot(LARK_SNAPSHOT, PUBLISHED_LARK, publish_key)
             if build["ads_updated"]:
-                publish_key = str(st.secrets.get("PUBLISHED_SNAPSHOT_KEY", "")).strip()
-                if not publish_key:
-                    raise ValueError(
-                        "Thiếu PUBLISHED_SNAPSHOT_KEY. Chạy scripts/setup_publish_key.py và "
-                        "thêm cùng key vào Streamlit Cloud Secrets trước khi publish."
-                    )
                 save_encrypted_ads_snapshot(ADS_SNAPSHOT, PUBLISHED_ADS, publish_key)
             tests = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"],
@@ -400,6 +425,7 @@ if "last_build" in st.session_state:
             publish_files = [
                 "snapshot/dashboard_snapshot.csv",
                 "snapshot/dashboard_snapshot.metadata.json",
+                "snapshot/published_lark_snapshot.enc",
             ]
             if build["ads_updated"]:
                 publish_files.append("snapshot/published_ads_snapshot.enc")

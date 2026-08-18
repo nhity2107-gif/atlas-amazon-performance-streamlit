@@ -13,21 +13,29 @@ from team_kpi import (
 
 
 class TeamKpiTests(unittest.TestCase):
-    def test_workflow_window_uses_mtd_input_date_not_last_order_date(self) -> None:
+    def test_workflow_window_uses_latest_lark_refresh_not_order_date(self) -> None:
         result = workflow_kpi_window_end(
             "2026-08",
-            {"report_as_of_date": "2026-08-05"},
+            "2026-08-06T18:30:00+00:00",
             pd.Timestamp("2026-08-03"),
         )
-        self.assertEqual(result, pd.Timestamp("2026-08-05 23:59:59"))
+        self.assertEqual(result, pd.Timestamp("2026-08-07 23:59:59"))
 
     def test_historical_workflow_window_uses_month_end(self) -> None:
         result = workflow_kpi_window_end(
             "2026-07",
-            {"report_as_of_date": "2026-08-05"},
+            "2026-08-05T08:00:00+00:00",
             pd.Timestamp("2026-07-30"),
         )
         self.assertEqual(result, pd.Timestamp("2026-07-31 23:59:59"))
+
+    def test_workflow_window_falls_back_when_lark_timestamp_missing(self) -> None:
+        result = workflow_kpi_window_end(
+            "2026-08",
+            "",
+            pd.Timestamp("2026-08-04"),
+        )
+        self.assertEqual(result, pd.Timestamp("2026-08-04 23:59:59"))
 
     def test_fbm_asin_rows_excludes_fba_and_unmapped(self) -> None:
         attributed = pd.DataFrame(

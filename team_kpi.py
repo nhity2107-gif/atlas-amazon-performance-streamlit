@@ -15,25 +15,22 @@ def fbm_asin_rows(attributed_asins: pd.DataFrame) -> pd.DataFrame:
 
 def workflow_kpi_window_end(
     selected_month: str,
-    order_snapshot_metadata: dict,
-    order_report_end: pd.Timestamp,
+    lark_snapshot_updated_at: object,
+    fallback: pd.Timestamp,
 ) -> pd.Timestamp:
-    """Use the MTD input date for workflow KPI, independent of last sold order."""
-    fallback = pd.Timestamp(order_report_end).normalize()
-    as_of = pd.to_datetime(
-        order_snapshot_metadata.get("report_as_of_date"), errors="coerce"
-    )
-    if pd.isna(as_of):
-        selected_end = fallback
+    """End Lark workflow KPI at its latest refresh, independent of Order data."""
+    updated_at = pd.to_datetime(lark_snapshot_updated_at, errors="coerce", utc=True)
+    if pd.isna(updated_at):
+        selected_end = pd.Timestamp(fallback).normalize()
     else:
-        as_of = pd.Timestamp(as_of).normalize()
-        as_of_month = as_of.strftime("%Y-%m")
-        if selected_month == as_of_month:
-            selected_end = as_of
-        elif selected_month < as_of_month:
+        lark_date = updated_at.tz_convert("Asia/Ho_Chi_Minh").tz_localize(None).normalize()
+        lark_month = lark_date.strftime("%Y-%m")
+        if selected_month == lark_month:
+            selected_end = lark_date
+        elif selected_month < lark_month:
             selected_end = pd.Timestamp(f"{selected_month}-01") + pd.offsets.MonthEnd(0)
         else:
-            selected_end = fallback
+            selected_end = pd.Timestamp(fallback).normalize()
     return selected_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
 

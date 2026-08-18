@@ -18,12 +18,7 @@ from ads_data import (
 )
 from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
-from lark_snapshot_store import (
-    SCHEMA_VERSION as LARK_SNAPSHOT_SCHEMA_VERSION,
-    load_lark_snapshot,
-    save_lark_snapshot,
-    snapshot_version as lark_snapshot_version,
-)
+import lark_snapshot_store as _lark_snapshot_store
 from product_data import (
     fulfillment_revenue_frame,
     records_from_order_hints,
@@ -47,7 +42,14 @@ from team_kpi import (
 
 # Streamlit Cloud hot-reloads the app file but can retain an older imported
 # module in the same process. Reload explicitly so a deployment that changes
-# the target snapshot schema never imports stale target_data functions.
+# a snapshot schema never imports stale module functions.
+_lark_snapshot_store = importlib.reload(_lark_snapshot_store)
+LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
+load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
+load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
+newest_lark_snapshot = _lark_snapshot_store.newest_lark_snapshot
+save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
+lark_snapshot_version = _lark_snapshot_store.snapshot_version
 _target_data = importlib.reload(_target_data)
 daily_targets_for_month = _target_data.daily_targets_for_month
 load_fbm_target_snapshot = _target_data.load_fbm_target_snapshot
@@ -57,6 +59,9 @@ target_progress = _target_data.target_progress
 
 PERSISTED_SNAPSHOT_PATH = Path(__file__).with_name("snapshot") / "dashboard_snapshot.csv"
 PERSISTED_LARK_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "lark"
+PUBLISHED_LARK_SNAPSHOT_PATH = (
+    Path(__file__).with_name("snapshot") / "published_lark_snapshot.enc"
+)
 PERSISTED_ADS_SNAPSHOT_DIR = Path(__file__).with_name("snapshot") / "ads"
 PUBLISHED_ADS_SNAPSHOT_PATH = (
     Path(__file__).with_name("snapshot") / "published_ads_snapshot.enc"
@@ -463,7 +468,7 @@ def current_ads_snapshot() -> dict | None:
         return local
     return load_encrypted_ads_snapshot(
         PUBLISHED_ADS_SNAPSHOT_PATH,
-        secret_value("PUBLISHED_SNAPSHOT_KEY"),
+        dashboard_data_key(),
     )
 
 
@@ -472,6 +477,13 @@ def secret_value(name: str) -> str:
         return str(st.secrets.get(name, "")).strip()
     except Exception:
         return ""
+
+
+def dashboard_data_key() -> str:
+    """Return the shared snapshot key, preferring the Cloud-facing name."""
+    return secret_value("DASHBOARD_DATA_KEY") or secret_value(
+        "PUBLISHED_SNAPSHOT_KEY"
+    )
 
 
 def lark_config() -> tuple[LarkConfig | None, list[str]]:
@@ -506,9 +518,30 @@ def persisted_lark_frames(snapshot_version: int, schema_version: str) -> dict | 
     return load_lark_snapshot(PERSISTED_LARK_SNAPSHOT_DIR)
 
 
+@st.cache_data(show_spinner=False)
+def published_lark_frames(
+    snapshot_version: int,
+    schema_version: str,
+    publish_key: str,
+) -> dict | None:
+    del snapshot_version, schema_version
+    return load_encrypted_lark_snapshot(PUBLISHED_LARK_SNAPSHOT_PATH, publish_key)
+
+
 def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
     version = lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR)
-    saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+    local_saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+    published_version = (
+        PUBLISHED_LARK_SNAPSHOT_PATH.stat().st_mtime_ns
+        if PUBLISHED_LARK_SNAPSHOT_PATH.exists()
+        else 0
+    )
+    published_saved = published_lark_frames(
+        published_version,
+        LARK_SNAPSHOT_SCHEMA_VERSION,
+        dashboard_data_key(),
+    )
+    saved = newest_lark_snapshot(local_saved, published_saved)
     if saved is not None and not refresh:
         return saved
     try:
@@ -1708,15 +1741,10 @@ else:
             report_start = performance["Date"].min().normalize()
             report_end = performance["Date"].max().normalize()
             window_start = pd.Timestamp(f"{selected_month}-01")
-            window_end = workflow_kpi_window_end(
-                selected_month,
-                order_snapshot_metadata,
-                report_end,
-            )
             st.success(
                 f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
-                        f"Purchase Date Los Angeles hiện có {report_start:%d/%m/%Y}–"
-                        f"{report_end:%d/%m/%Y}; KPI workflow tính đến {window_end:%d/%m/%Y}."
+                f"Order/Revenue Los Angeles hiện có {report_start:%d/%m/%Y}–"
+                f"{report_end:%d/%m/%Y}."
             )
             refresh_lark = st.button(
                 "Cập nhật snapshot Lark · tất cả bảng",
@@ -1733,6 +1761,11 @@ else:
                 )
                 with st.spinner(spinner_text):
                     lark = latest_lark_frames(config, refresh=refresh_lark)
+                window_end = workflow_kpi_window_end(
+                    selected_month,
+                    lark.get("snapshot_updated_at", ""),
+                    report_end,
+                )
                 if lark.get("refresh_error"):
                     st.warning(
                         "Không cập nhật được Lark API; dashboard tiếp tục dùng snapshot gần nhất."
@@ -1746,6 +1779,10 @@ else:
                         st.caption(
                             f"Snapshot Lark cập nhật lần cuối: {updated_at:%d/%m/%Y %H:%M}"
                         )
+                st.caption(
+                    "KPI output Lark dùng ngày lịch Lark đến lần cập nhật mới nhất: "
+                    f"{window_start:%d/%m/%Y}–{window_end:%d/%m/%Y}."
+                )
                 order_updated_at = pd.to_datetime(
                     order_snapshot_metadata.get("source_updated_at")
                     or order_snapshot_metadata.get("updated_at"),

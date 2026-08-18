@@ -28,10 +28,15 @@ phải cập nhật cả code, test và tài liệu này.
   `America/Los_Angeles`.
 - Sau khi đổi timezone mới lấy Purchase Date và Purchase Month.
 - Orders, Units và Revenue chỉ được lọc theo Purchase Month Los Angeles.
-- KPI workflow Lark dùng `report_as_of_date` của lần input MTD gần nhất làm ngày
-  cuối kỳ, không dùng Purchase Date cuối cùng (vì ngày không có order vẫn có thể
-  phát sinh task). Local Update Tool refresh đủ TOTAL ASIN/MRND IDEA/CLIPARTS mỗi
-  lần cập nhật hằng ngày; nếu API lỗi phải cảnh báo rõ khi fallback snapshot cũ.
+- Order/Revenue và phạm vi Ads report dùng kỳ báo cáo theo
+  `America/Los_Angeles`; `report_as_of_date` chỉ thuộc hệ thời gian Amazon.
+- KPI workflow Lark độc lập với Order: ngày cuối kỳ là ngày lịch Việt Nam của lần
+  refresh snapshot Lark mới nhất. Local Update Tool refresh đủ TOTAL
+  ASIN/MRND IDEA/CLIPARTS mỗi lần cập nhật hằng ngày; nếu API lỗi phải cảnh báo
+  rõ khi fallback snapshot cũ và dùng ngày cập nhật của snapshot đó.
+- Nếu Streamlit Cloud đồng thời có snapshot Lark runtime cũ và snapshot mã hóa
+  đã publish, luôn chọn snapshot có `updated_at` mới hơn; không ưu tiên mù quáng
+  bản local vì có thể khiến KPI dừng ở ngày cũ.
 - Không dùng ngày Lark để lọc Revenue và không dùng Purchase Time để lọc output
   workflow của Lark.
 
@@ -278,7 +283,8 @@ của dòng ASIN sau khi lọc ngày.
 - Local Update Tool chạy riêng trên `127.0.0.1:8502`; mặc định chỉ nhận 2 Order.
   Tùy chọn Ads cuối tháng mới hiển thị và bắt buộc 6 Ads report. Vì GitHub public, chỉ
   `snapshot/published_ads_snapshot.enc` đã mã hóa Fernet được phép push;
-  Streamlit giải mã bằng `PUBLISHED_SNAPSHOT_KEY` trong Secrets.
+  Streamlit giải mã bằng `DASHBOARD_DATA_KEY` trong Secrets. Tên cũ
+  `PUBLISHED_SNAPSHOT_KEY` vẫn được hỗ trợ để tương thích ngược.
 
 ## 9. Bảo mật và repository
 
