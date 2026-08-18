@@ -10,8 +10,7 @@ phải cập nhật cả code, test và tài liệu này.
 - Dữ liệu Order không cần upload lại mỗi lần truy cập.
 - Không lưu file report gốc, order-level data hay thông tin khách hàng trong
   repository/dashboard snapshot.
-- Team KPI có lớp mật khẩu riêng. Dashboard không còn dùng data-encryption key
-  để giải mã snapshot Order.
+- Team KPI được mở công khai cùng các tab còn lại, không có màn hình mật khẩu.
 
 ## 2. Hai hệ thời gian độc lập
 
@@ -292,8 +291,7 @@ của dòng ASIN sau khi lọc ngày.
 
 - `.streamlit/secrets.toml` luôn bị gitignore.
 - Chỉ commit `.streamlit/secrets.toml.example` với placeholder.
-- Không commit App ID, App Secret, Base token, table IDs thật hoặc Team KPI
-  password.
+- Không commit App ID, App Secret, Base token hoặc table IDs thật.
 - Không commit raw reports, SQLite database hoặc thông tin khách hàng.
 - Snapshot Order dạng aggregate được phép đưa vào repository theo thiết kế hiện
   tại; snapshot Lark thì không.

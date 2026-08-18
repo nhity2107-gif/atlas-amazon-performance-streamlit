@@ -12,6 +12,13 @@ import ads_data
 
 
 class StreamlitHotReloadTests(unittest.TestCase):
+    def test_team_kpi_has_no_password_gate(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+        source = app_path.read_text(encoding="utf-8")
+        self.assertNotIn("DASHBOARD_PASSWORD", source)
+        self.assertNotIn("Mật khẩu Team KPI", source)
+        self.assertNotIn("Mở Team KPI", source)
+
     def test_app_recovers_when_snapshot_modules_were_cached_without_new_api(self) -> None:
         original_target = target_data.daily_targets_for_month
         original_lark = lark_snapshot_store.load_encrypted_lark_snapshot

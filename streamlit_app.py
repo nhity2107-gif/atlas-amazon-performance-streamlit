@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import importlib
 from pathlib import Path
 
@@ -1160,23 +1159,9 @@ def employee_kpi_tables(
 
 
 def team_access_granted() -> bool:
-    expected = secret_value("DASHBOARD_PASSWORD")
-    if not expected:
-        st.warning(
-            "Team KPI chứa dữ liệu nhân sự từ Lark. Hãy thêm DASHBOARD_PASSWORD "
-            "trong Streamlit Secrets để bật phần này an toàn trên app public."
-        )
-        return False
-    if st.session_state.get("team_authenticated"):
-        return True
-    password = st.text_input("Mật khẩu Team KPI", type="password")
-    if st.button("Mở Team KPI", type="primary"):
-        if hmac.compare_digest(password, expected):
-            st.session_state["team_authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Mật khẩu không đúng.")
-    return False
+    """Team KPI is intentionally public with the rest of the dashboard."""
+
+    return True
 
 
 with st.sidebar:
