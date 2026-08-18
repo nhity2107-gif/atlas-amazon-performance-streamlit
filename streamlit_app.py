@@ -38,21 +38,23 @@ from team_kpi import (
 # Streamlit Cloud hot-reloads the app file but can retain older imported
 # modules in the same process. Reload explicitly so a deployment that changes
 # a snapshot schema never imports stale module functions.
-_ads_data = importlib.reload(_ads_data)
+_ads_data = importlib.reload(importlib.import_module("ads_data"))
 load_ads_snapshot = _ads_data.load_ads_snapshot
 load_encrypted_ads_snapshot_with_keys = (
     _ads_data.load_encrypted_ads_snapshot_with_keys
 )
 normalize_person = _ads_data.normalize_person
 select_ads_summary = _ads_data.select_ads_summary
-_lark_snapshot_store = importlib.reload(_lark_snapshot_store)
+_lark_snapshot_store = importlib.reload(
+    importlib.import_module("lark_snapshot_store")
+)
 LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
 load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
 load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
 newest_lark_snapshot = _lark_snapshot_store.newest_lark_snapshot
 save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
 lark_snapshot_version = _lark_snapshot_store.snapshot_version
-_target_data = importlib.reload(_target_data)
+_target_data = importlib.reload(importlib.import_module("target_data"))
 daily_targets_for_month = _target_data.daily_targets_for_month
 load_fbm_target_snapshot = _target_data.load_fbm_target_snapshot
 target_for_month = _target_data.target_for_month
