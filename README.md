@@ -138,7 +138,8 @@ Team KPI is intentionally FBM-only. All employee Order-derived metrics
 filter to `Fulfill By = FBM`. Employee Ads KPI uses separate FBM-only Spend,
 Sales and Orders fields, so FBA is excluded even when a campaign is assigned to
 Support or an execution marker. Overview and aggregate Ads Performance continue
-to show FBA + FBM for store reconciliation.
+to reconcile the total, while Ads Performance displays separate FBM and FBA
+Spend, Sales, Orders and ACOS rows.
 
 ## Local Ads allocation
 
@@ -153,7 +154,10 @@ directly to the separate `Nhi-Support` row. Campaign markers containing `LINH`,
 removed from the original Ads By owner. FBA is identified
 from TOTAL ASIN `Fulfill By = FBA`, then
 assigned from `Custom By`: Trương Ý Nhi becomes `Nhi-FBA` and Phương Linh/MRnD
-becomes `Linh-FBA`. The Ads snapshot stores multiple Store/Month imports.
+becomes `Linh-FBA`. FBA ownership takes precedence over Support and other
+campaign execution markers. Ads Performance shows a separate FBA ownership
+table with both assignees; these rows remain excluded from Team KPI FBM. The Ads
+snapshot stores multiple Store/Month imports.
 
 Confirmed source corrections are centralized in `fulfillment_rules.py`.
 `B0F1XZT333` and `B0F1XPZ1JX` are treated as FBA even while TOTAL ASIN still

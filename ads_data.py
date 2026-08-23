@@ -5,7 +5,7 @@ from io import StringIO
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Iterable
 import unicodedata
 
 import pandas as pd
@@ -224,7 +224,13 @@ def build_ads_employee_summary_from_reports(
         )
 
     rows["Nhân sự"] = rows["ads_by"].fillna("").astype(str).str.strip()
-    support_mask = rows["Campaign name"].str.contains(SUPPORT_PATTERN, na=False)
+    catalog_fba_mask = rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
+    # Fulfillment ownership has priority over campaign execution markers. Every
+    # FBA row must reconcile to Nhi-FBA or Linh-FBA and never leak into FBM KPI.
+    support_mask = (
+        rows["Campaign name"].str.contains(SUPPORT_PATTERN, na=False)
+        & ~catalog_fba_mask
+    )
     rows.loc[support_mask, "Nhân sự"] = "Nhi-Support"
     execution_masks: dict[str, pd.Series] = {}
     assigned_execution = support_mask.copy()
@@ -232,13 +238,13 @@ def build_ads_employee_summary_from_reports(
         marker_mask = (
             rows["Campaign name"].str.contains(pattern, na=False)
             & ~assigned_execution
+            & ~catalog_fba_mask
         )
         rows.loc[marker_mask, "Nhân sự"] = assignee
         execution_masks[assignee] = marker_mask
         assigned_execution |= marker_mask
 
-    catalog_fba_mask = rows["fulfill_by"].fillna("").str.strip().str.casefold().eq("fba")
-    fba_mask = catalog_fba_mask & ~assigned_execution
+    fba_mask = catalog_fba_mask
     normalized_custom = rows.loc[fba_mask, "custom_by"].fillna("").map(normalize_person)
     rows.loc[fba_mask, "Nhân sự"] = ""
     rows.loc[
@@ -663,6 +669,30 @@ def load_encrypted_ads_snapshot(
     return {"summary": summary, **metadata}
 
 
+def load_encrypted_ads_snapshot_with_keys(
+    path: Path,
+    keys: Iterable[str],
+) -> dict[str, Any] | None:
+    """Load a published snapshot with any configured shared-key alias.
+
+    Some existing Streamlit deployments still contain both the legacy
+    ``PUBLISHED_SNAPSHOT_KEY`` and the newer ``DASHBOARD_DATA_KEY``. Trying all
+    distinct values lets a snapshot created by either configured machine be
+    read without exposing or rotating the keys.
+    """
+
+    attempted: set[str] = set()
+    for key in keys:
+        normalized = str(key or "").strip()
+        if not normalized or normalized in attempted:
+            continue
+        attempted.add(normalized)
+        snapshot = load_encrypted_ads_snapshot(path, normalized)
+        if snapshot is not None:
+            return snapshot
+    return None
+
+
 def select_ads_summary(
     snapshot: dict[str, Any] | None,
     month: str,
@@ -713,3 +743,70 @@ def select_ads_summary(
         combined["Ads_Sales"].where(combined["Ads_Sales"].ne(0))
     )
     return combined[SUMMARY_COLUMNS].sort_values("Ads_Spend", ascending=False), imports
+
+
+def ads_fulfillment_summary(
+    snapshot: dict[str, Any] | None,
+    month: str,
+    store: str,
+) -> pd.DataFrame:
+    """Reconcile published Ads totals into FBM and FBA rows."""
+
+    columns = ["Fulfill By", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"]
+    complete, _ = select_ads_summary(snapshot, month, store)
+    fbm, _ = select_ads_summary(snapshot, month, store, fbm_only=True)
+    if complete.empty:
+        return pd.DataFrame(columns=columns)
+
+    def totals(frame: pd.DataFrame) -> dict[str, float]:
+        return {
+            metric: float(
+                pd.to_numeric(frame[metric], errors="coerce").fillna(0).sum()
+            )
+            for metric in ("Ads_Spend", "Ads_Sales", "Ads_Orders")
+        }
+
+    complete_totals = totals(complete)
+    fbm_totals = totals(fbm)
+    fba_totals = {
+        metric: max(0.0, complete_totals[metric] - fbm_totals[metric])
+        for metric in complete_totals
+    }
+    rows = []
+    for fulfillment, metrics in (("FBM", fbm_totals), ("FBA", fba_totals)):
+        sales = metrics["Ads_Sales"]
+        rows.append(
+            {
+                "Fulfill By": fulfillment,
+                **metrics,
+                "ACOS": metrics["Ads_Spend"] / sales if sales else pd.NA,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def ads_fba_employee_summary(
+    snapshot: dict[str, Any] | None,
+    month: str,
+    store: str,
+) -> pd.DataFrame:
+    """Return FBA Ads metrics split between the two FBA assignees."""
+
+    columns = ["Nhân sự", "ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders", "ACOS"]
+    complete, _ = select_ads_summary(snapshot, month, store)
+    owners = pd.DataFrame({"Nhân sự": ["Nhi-FBA", "Linh-FBA"]})
+    if complete.empty:
+        result = owners.copy()
+        for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders"):
+            result[column] = 0.0
+    else:
+        fba = complete.loc[
+            complete["Nhân sự"].fillna("").astype(str).isin(owners["Nhân sự"])
+        ].copy()
+        result = owners.merge(fba.drop(columns=["ACOS"], errors="ignore"), on="Nhân sự", how="left")
+        for column in ("ASINs", "Ads_Spend", "Ads_Sales", "Ads_Orders"):
+            result[column] = pd.to_numeric(result[column], errors="coerce").fillna(0)
+    result["ACOS"] = result["Ads_Spend"].div(
+        result["Ads_Sales"].where(result["Ads_Sales"].ne(0))
+    )
+    return result[columns]

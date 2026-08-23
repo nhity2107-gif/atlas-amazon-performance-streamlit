@@ -10,12 +10,7 @@ import sys
 import pandas as pd
 import streamlit as st
 
-from ads_data import (
-    build_ads_employee_summary_from_reports,
-    read_ads_workbook,
-    save_encrypted_ads_snapshot,
-    upsert_ads_snapshot,
-)
+import ads_data as _ads_data
 from lark_data import LarkConfig, fetch_lark_frames
 import lark_snapshot_store as _lark_snapshot_store
 from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
@@ -23,6 +18,14 @@ from scripts.git_publish import push_with_remote_sync
 import target_data as _target_data
 
 
+_ads_data = importlib.reload(_ads_data)
+ads_fba_employee_summary = _ads_data.ads_fba_employee_summary
+ads_fulfillment_summary = _ads_data.ads_fulfillment_summary
+build_ads_employee_summary_from_reports = _ads_data.build_ads_employee_summary_from_reports
+load_ads_snapshot = _ads_data.load_ads_snapshot
+read_ads_workbook = _ads_data.read_ads_workbook
+save_encrypted_ads_snapshot = _ads_data.save_encrypted_ads_snapshot
+upsert_ads_snapshot = _ads_data.upsert_ads_snapshot
 _lark_snapshot_store = importlib.reload(_lark_snapshot_store)
 load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
 save_encrypted_lark_snapshot = _lark_snapshot_store.save_encrypted_lark_snapshot
@@ -203,6 +206,59 @@ if include_ads:
     paw_sd = paw_ads_cols[2].file_uploader("Pawsionate SD", type=["xlsx"], key="paw_sd")
 else:
     st.info("Chế độ hằng ngày: chỉ cập nhật 2 Order MTD; Ads snapshot hiện tại được giữ nguyên.")
+
+current_local_ads = load_ads_snapshot(ADS_SNAPSHOT)
+if current_local_ads is not None:
+    current_ads_imports = [
+        item
+        for item in current_local_ads.get("imports", [])
+        if item.get("month") == month
+    ]
+    if current_ads_imports:
+        period_ends = [item.get("period_end", "") for item in current_ads_imports]
+        period_ends = [value for value in period_ends if value]
+        period_label = (
+            pd.Timestamp(max(period_ends)).strftime("%d/%m/%Y")
+            if period_ends
+            else "không rõ ngày"
+        )
+        st.markdown("### Ads snapshot hiện tại · FBM / FBA")
+        st.caption(
+            f"Dữ liệu tháng {month}, cập nhật đến hết {period_label}. "
+            "FBA chỉ dùng để đối soát và không tính vào Team KPI FBM."
+        )
+        fulfillment_preview = ads_fulfillment_summary(
+            current_local_ads, month, "All Stores"
+        )
+        fba_owner_preview = ads_fba_employee_summary(
+            current_local_ads, month, "All Stores"
+        )
+        preview_left, preview_right = st.columns(2)
+        preview_left.markdown("**Tổng theo fulfillment**")
+        preview_left.dataframe(
+            fulfillment_preview,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Orders": st.column_config.NumberColumn(format="%d"),
+                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+            },
+        )
+        preview_right.markdown("**FBA theo nhân sự**")
+        preview_right.dataframe(
+            fba_owner_preview,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "ASINs": st.column_config.NumberColumn(format="%d"),
+                "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Orders": st.column_config.NumberColumn(format="%d"),
+                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+            },
+        )
 
 required_uploads = {
     "Wrappiness Order": wr_order,

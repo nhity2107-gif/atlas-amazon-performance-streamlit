@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import importlib
 from pathlib import Path
 
@@ -10,12 +9,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from ads_data import (
-    load_ads_snapshot,
-    load_encrypted_ads_snapshot,
-    normalize_person,
-    select_ads_summary,
-)
+import ads_data as _ads_data
 from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
 import lark_snapshot_store as _lark_snapshot_store
@@ -40,17 +34,28 @@ from team_kpi import (
 )
 
 
-# Streamlit Cloud hot-reloads the app file but can retain an older imported
-# module in the same process. Reload explicitly so a deployment that changes
+# Streamlit Cloud hot-reloads the app file but can retain older imported
+# modules in the same process. Reload explicitly so a deployment that changes
 # a snapshot schema never imports stale module functions.
-_lark_snapshot_store = importlib.reload(_lark_snapshot_store)
+_ads_data = importlib.reload(importlib.import_module("ads_data"))
+ads_fulfillment_summary = _ads_data.ads_fulfillment_summary
+ads_fba_employee_summary = _ads_data.ads_fba_employee_summary
+load_ads_snapshot = _ads_data.load_ads_snapshot
+load_encrypted_ads_snapshot_with_keys = (
+    _ads_data.load_encrypted_ads_snapshot_with_keys
+)
+normalize_person = _ads_data.normalize_person
+select_ads_summary = _ads_data.select_ads_summary
+_lark_snapshot_store = importlib.reload(
+    importlib.import_module("lark_snapshot_store")
+)
 LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
 load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
 load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
 newest_lark_snapshot = _lark_snapshot_store.newest_lark_snapshot
 save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
 lark_snapshot_version = _lark_snapshot_store.snapshot_version
-_target_data = importlib.reload(_target_data)
+_target_data = importlib.reload(importlib.import_module("target_data"))
 daily_targets_for_month = _target_data.daily_targets_for_month
 load_fbm_target_snapshot = _target_data.load_fbm_target_snapshot
 target_for_month = _target_data.target_for_month
@@ -466,9 +471,9 @@ def current_ads_snapshot() -> dict | None:
     local = load_ads_snapshot(PERSISTED_ADS_SNAPSHOT_DIR)
     if local is not None:
         return local
-    return load_encrypted_ads_snapshot(
+    return load_encrypted_ads_snapshot_with_keys(
         PUBLISHED_ADS_SNAPSHOT_PATH,
-        dashboard_data_key(),
+        dashboard_data_keys(),
     )
 
 
@@ -481,9 +486,18 @@ def secret_value(name: str) -> str:
 
 def dashboard_data_key() -> str:
     """Return the shared snapshot key, preferring the Cloud-facing name."""
-    return secret_value("DASHBOARD_DATA_KEY") or secret_value(
-        "PUBLISHED_SNAPSHOT_KEY"
+    keys = dashboard_data_keys()
+    return keys[0] if keys else ""
+
+
+def dashboard_data_keys() -> tuple[str, ...]:
+    """Return every distinct shared key configured under current or legacy names."""
+
+    values = (
+        secret_value("DASHBOARD_DATA_KEY"),
+        secret_value("PUBLISHED_SNAPSHOT_KEY"),
     )
+    return tuple(dict.fromkeys(value for value in values if value))
 
 
 def lark_config() -> tuple[LarkConfig | None, list[str]]:
@@ -1146,23 +1160,9 @@ def employee_kpi_tables(
 
 
 def team_access_granted() -> bool:
-    expected = secret_value("DASHBOARD_PASSWORD")
-    if not expected:
-        st.warning(
-            "Team KPI chứa dữ liệu nhân sự từ Lark. Hãy thêm DASHBOARD_PASSWORD "
-            "trong Streamlit Secrets để bật phần này an toàn trên app public."
-        )
-        return False
-    if st.session_state.get("team_authenticated"):
-        return True
-    password = st.text_input("Mật khẩu Team KPI", type="password")
-    if st.button("Mở Team KPI", type="primary"):
-        if hmac.compare_digest(password, expected):
-            st.session_state["team_authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Mật khẩu không đúng.")
-    return False
+    """Team KPI is intentionally public with the rest of the dashboard."""
+
+    return True
 
 
 with st.sidebar:
@@ -1560,6 +1560,12 @@ elif page.startswith("02"):
 
 elif page.startswith("03"):
     ads, type_performance, live_ads_imports = live_ads_performance(selected_month, store)
+    ads_by_fulfillment = ads_fulfillment_summary(
+        current_ads_snapshot(), selected_month, store
+    )
+    ads_fba_by_employee = ads_fba_employee_summary(
+        current_ads_snapshot(), selected_month, store
+    )
     if not live_ads_imports:
         st.warning(
             "Chưa có Ads snapshot month-to-date khớp tháng/store đang chọn. "
@@ -1580,7 +1586,7 @@ elif page.startswith("03"):
     cvr = ads["orders"] / ads["clicks"] if ads["clicks"] else pd.NA
     cols = st.columns(4)
     cols[0].metric(
-        "Ad spend", money(ads["spend"]),
+        "Total Ad spend", money(ads["spend"]),
         f"{tacos:.1%} TACOS" if pd.notna(tacos) else "TACOS N/A",
     )
     sales_share = ads["sales"] / data["revenue"] if data["revenue"] else pd.NA
@@ -1593,9 +1599,63 @@ elif page.startswith("03"):
         f"ROAS {roas:.2f}" if pd.notna(roas) else "ROAS N/A",
     )
     cols[3].metric(
-        "Ad orders", f'{int(ads["orders"]):,}',
+        "Total Ad orders", f'{int(ads["orders"]):,}',
         f"{cvr:.1%} CVR" if pd.notna(cvr) else "CVR N/A",
     )
+    if not ads_by_fulfillment.empty:
+        st.markdown(
+            '<div class="atlas-card"><div class="atlas-eyebrow">ADS BY FULFILLMENT</div>'
+            '<h3>Tách Ads · FBM / FBA</h3></div>',
+            unsafe_allow_html=True,
+        )
+        fulfillment_index = ads_by_fulfillment.set_index("Fulfill By")
+        for fulfillment_type in ("FBM", "FBA"):
+            row = fulfillment_index.loc[fulfillment_type]
+            fulfillment_cols = st.columns(4)
+            fulfillment_cols[0].metric(
+                f"{fulfillment_type} Ads Spend", money(float(row["Ads_Spend"]))
+            )
+            fulfillment_cols[1].metric(
+                f"{fulfillment_type} Ads Sales", money(float(row["Ads_Sales"]))
+            )
+            fulfillment_cols[2].metric(
+                f"{fulfillment_type} ACOS",
+                f'{float(row["ACOS"]):.1%}' if pd.notna(row["ACOS"]) else "N/A",
+            )
+            fulfillment_cols[3].metric(
+                f"{fulfillment_type} Ads Orders", f'{int(row["Ads_Orders"]):,}'
+            )
+        st.dataframe(
+            ads_by_fulfillment,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Orders": st.column_config.NumberColumn(format="%d"),
+                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+            },
+        )
+        st.markdown(
+            '<div class="atlas-card"><div class="atlas-eyebrow">FBA OWNERSHIP</div>'
+            '<h3>Ads FBA theo nhân sự</h3>'
+            '<div class="atlas-note">Map theo ASIN → TOTAL ASIN → Custom By: '
+            'Trương Ý Nhi = Nhi-FBA; Phương Linh/MRnD = Linh-FBA. '
+            'Các số liệu này không tính vào Team KPI FBM.</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            ads_fba_by_employee,
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "ASINs": st.column_config.NumberColumn(format="%d"),
+                "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
+                "Ads_Orders": st.column_config.NumberColumn(format="%d"),
+                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+            },
+        )
     funnel = pd.DataFrame(
         {"Stage": ["Impressions", "Clicks", "PPC Orders"], "Volume": [ads["impressions"], ads["clicks"], ads["orders"]]}
     )
@@ -1800,6 +1860,9 @@ else:
                 ads_snapshot = current_ads_snapshot()
                 ads_summary, ads_imports = select_ads_summary(
                     ads_snapshot, selected_month, store, fbm_only=True
+                )
+                ads_fba_kpi_preview = ads_fba_employee_summary(
+                    ads_snapshot, selected_month, store
                 )
                 ads_snapshot_matches = not ads_summary.empty
                 records = attribution["records"]
@@ -2128,6 +2191,31 @@ else:
                                     "PD_Check_Days": st.column_config.NumberColumn(format="%.2f"),
                                 },
                             )
+                            if title.startswith("Ads"):
+                                st.markdown("#### Ads FBA · đối soát riêng theo nhân sự")
+                                st.caption(
+                                    "Map theo ASIN → TOTAL ASIN → Custom By. "
+                                    "Nhi-FBA và Linh-FBA không được cộng vào Team KPI FBM phía trên."
+                                )
+                                fba_display = ads_fba_kpi_preview.copy()
+                                for money_column in ("Ads_Spend", "Ads_Sales"):
+                                    fba_display[money_column] = fba_display[money_column].map(
+                                        lambda value: f"${float(value):,.2f}"
+                                    )
+                                fba_display["ASINs"] = (
+                                    fba_display["ASINs"].fillna(0).round().astype(int)
+                                )
+                                fba_display["Ads_Orders"] = (
+                                    fba_display["Ads_Orders"].fillna(0).round().astype(int)
+                                )
+                                fba_display["ACOS"] = fba_display["ACOS"].map(
+                                    lambda value: "N/A" if pd.isna(value) else f"{float(value):.1%}"
+                                )
+                                st.dataframe(
+                                    fba_display,
+                                    hide_index=True,
+                                    width="stretch",
+                                )
 
                 with st.expander("Field diagnostics"):
                     st.json(

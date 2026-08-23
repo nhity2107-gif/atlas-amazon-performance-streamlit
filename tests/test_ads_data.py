@@ -8,10 +8,13 @@ import pandas as pd
 from cryptography.fernet import Fernet
 
 from ads_data import (
+    ads_fulfillment_summary,
+    ads_fba_employee_summary,
     build_ads_employee_summary,
     build_ads_employee_summary_from_reports,
     load_ads_snapshot,
     load_encrypted_ads_snapshot,
+    load_encrypted_ads_snapshot_with_keys,
     save_ads_snapshot,
     save_encrypted_ads_snapshot,
     select_ads_summary,
@@ -46,6 +49,17 @@ class AdsDataTests(unittest.TestCase):
             self.assertEqual(restored["summary"].iloc[0]["Nhân sự"], "Owner A")
             wrong_key = Fernet.generate_key().decode("utf-8")
             self.assertIsNone(load_encrypted_ads_snapshot(encrypted, wrong_key))
+
+            restored_with_fallback = load_encrypted_ads_snapshot_with_keys(
+                encrypted,
+                [wrong_key, "", wrong_key, key],
+            )
+            self.assertIsNotNone(restored_with_fallback)
+            assert restored_with_fallback is not None
+            self.assertEqual(
+                restored_with_fallback["summary"].iloc[0]["Nhân sự"],
+                "Owner A",
+            )
 
     def test_any_campaign_containing_support_maps_to_nhi_support(self) -> None:
         reports = [pd.DataFrame([
@@ -158,10 +172,10 @@ class AdsDataTests(unittest.TestCase):
         indexed = summary.set_index("Nhân sự")
 
         self.assertEqual(indexed.loc["Owner A", "Ads_Spend"], 100)
-        self.assertEqual(indexed.loc["Nhi-Support", "Ads_Spend"], 10)
+        self.assertEqual(indexed.loc["Nhi-FBA", "Ads_Spend"], 10)
         self.assertEqual(indexed.loc["Linh-FBA", "Ads_Spend"], 20)
         self.assertEqual(indexed.loc["Owner A", "FBM_Ads_Spend"], 100)
-        self.assertEqual(indexed.loc["Nhi-Support", "FBM_Ads_Spend"], 0)
+        self.assertEqual(indexed.loc["Nhi-FBA", "FBM_Ads_Spend"], 0)
         self.assertEqual(indexed.loc["Linh-FBA", "FBM_Ads_Spend"], 0)
         self.assertAlmostEqual(summary["Ads_Spend"].sum(), 130)
         self.assertAlmostEqual(summary["FBM_Ads_Spend"].sum(), 100)
@@ -175,6 +189,18 @@ class AdsDataTests(unittest.TestCase):
         fbm, _ = select_ads_summary(snapshot, "2026-07", "All Stores", fbm_only=True)
         self.assertEqual(fbm["Nhân sự"].tolist(), ["Owner A"])
         self.assertEqual(fbm.iloc[0]["Ads_Spend"], 100)
+        fulfillment = ads_fulfillment_summary(
+            snapshot, "2026-07", "All Stores"
+        ).set_index("Fulfill By")
+        self.assertEqual(fulfillment.loc["FBM", "Ads_Spend"], 100)
+        self.assertEqual(fulfillment.loc["FBA", "Ads_Spend"], 30)
+        self.assertEqual(fulfillment["Ads_Spend"].sum(), 130)
+        fba_people = ads_fba_employee_summary(
+            snapshot, "2026-07", "All Stores"
+        ).set_index("Nhân sự")
+        self.assertEqual(fba_people.loc["Nhi-FBA", "Ads_Spend"], 10)
+        self.assertEqual(fba_people.loc["Linh-FBA", "Ads_Spend"], 20)
+        self.assertEqual(fba_people["Ads_Spend"].sum(), 30)
 
     def test_support_transfer_is_separate_and_preserves_totals(self) -> None:
         products = pd.DataFrame(
