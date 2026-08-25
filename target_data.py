@@ -196,6 +196,7 @@ def target_progress(
         "prior_mtd": prior_mtd,
         "vs_forecast": actual / forecast_mtd - 1 if forecast_mtd else 0.0,
         "vs_2025": actual / prior_mtd - 1 if prior_mtd else 0.0,
+        "yoy_index": actual / prior_mtd if prior_mtd else 0.0,
         "forecast_full_month": float(selected["Forecast 2026"].sum()),
         "prior_full_month": float(selected["Revenue 2025"].sum()),
     }

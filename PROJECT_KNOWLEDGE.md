@@ -88,7 +88,9 @@ nguồn được cập nhật, timezone, phạm vi ngày và số dòng snapshot
   `report_as_of_date`; tuyệt đối không chia đều target tháng cho từng ngày.
 - `Revenue 2025 MTD` là tổng `DAILY REV 2025` trên cùng số ngày. Dashboard hiển
   thị `Actual vs Forecast = Actual 2026 / Forecast 2026 - 1` và
-  `Actual vs 2025 = Actual 2026 / Revenue 2025 - 1`.
+  `YoY MTD = Actual 2026 / Revenue 2025`. YoY là chỉ số so sánh: `100%` nghĩa
+  là bằng năm trước, `163.86%` nghĩa là doanh thu bằng 163.86% năm trước
+  (tương đương tăng trưởng `+63.86%`).
 - Actual 2026 lấy từ Order snapshot FBM theo Purchase Date Los Angeles. Ngày
   chốt so sánh lấy từ `report_as_of_date`, không lấy Purchase Date mới nhất.
   Tháng đã kết thúc dùng toàn bộ các dòng ngày của tháng.

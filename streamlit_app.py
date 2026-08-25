@@ -1317,7 +1317,7 @@ if page.startswith("01"):
                 "Revenue 2025 MTD", money(float(fbm_target_progress["prior_mtd"]))
             )
             target_cols[4].metric(
-                "Actual vs 2025", f'{float(fbm_target_progress["vs_2025"]):+.1%}'
+                "YoY MTD", f'{float(fbm_target_progress["yoy_index"]):.1%}'
             )
             st.caption(
                 "So sánh theo từng ngày từ sheet `Revenue Forecast Q1&2 - 2026`: "
@@ -1359,12 +1359,11 @@ if page.startswith("01"):
                         ))
                         .sub(1)
                     )
-                    daily_performance["YoY"] = (
+                    daily_performance["YoY Index"] = (
                         daily_performance["Revenue"]
                         .div(daily_performance["Revenue 2025"].where(
                             daily_performance["Revenue 2025"].ne(0)
                         ))
-                        .sub(1)
                     )
                 st.markdown(f"#### {fulfillment_type}")
                 chart_tab, table_tab = st.tabs(
@@ -1381,7 +1380,7 @@ if page.startswith("01"):
                     if fulfillment_type == "FBM" and not fbm_daily_targets.empty:
                         daily_columns = [
                             "Date", "Revenue", "Forecast 2026", "Vs Forecast",
-                            "Revenue 2025", "YoY", "Quantity",
+                            "Revenue 2025", "YoY Index", "Quantity",
                         ]
                     daily_table = daily_performance[daily_columns].copy()
                     st.dataframe(
@@ -1405,15 +1404,17 @@ if page.startswith("01"):
                             "Revenue 2025": st.column_config.NumberColumn(
                                 "Revenue 2025", format="dollar"
                             ),
-                            "YoY": st.column_config.NumberColumn(
-                                "YoY", format="percent"
+                            "YoY Index": st.column_config.NumberColumn(
+                                "YoY", format="percent",
+                                help="Actual 2026 / Revenue 2025; 100% nghĩa là bằng năm trước",
                             ),
                         },
                     )
                     st.caption(
                         (
                             "FBM · Actual 2026 theo Purchase Date Los Angeles; Forecast 2026 "
-                            "và Revenue 2025 lấy đúng từng ngày trong file forecast."
+                            "và Revenue 2025 lấy đúng từng ngày trong file forecast. "
+                            "YoY = Actual 2026 / Revenue 2025; 100% nghĩa là bằng năm trước."
                             if fulfillment_type == "FBM" and not fbm_daily_targets.empty
                             else f"{fulfillment_type} · Quantity = tổng Units theo Purchase Date."
                         )
