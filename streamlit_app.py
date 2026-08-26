@@ -542,9 +542,12 @@ def published_lark_frames(
     return load_encrypted_lark_snapshot(PUBLISHED_LARK_SNAPSHOT_PATH, publish_key)
 
 
-def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
-    version = lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR)
-    local_saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+def saved_lark_frames() -> dict | None:
+    """Return the newest local or published Lark snapshot available."""
+    local_saved = persisted_lark_frames(
+        lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
+        LARK_SNAPSHOT_SCHEMA_VERSION,
+    )
     published_version = (
         PUBLISHED_LARK_SNAPSHOT_PATH.stat().st_mtime_ns
         if PUBLISHED_LARK_SNAPSHOT_PATH.exists()
@@ -555,7 +558,11 @@ def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
         LARK_SNAPSHOT_SCHEMA_VERSION,
         dashboard_data_key(),
     )
-    saved = newest_lark_snapshot(local_saved, published_saved)
+    return newest_lark_snapshot(local_saved, published_saved)
+
+
+def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
+    saved = saved_lark_frames()
     if saved is not None and not refresh:
         return saved
     try:
@@ -1271,10 +1278,9 @@ if page.startswith("01"):
 
     overview_stores = list(STORES) if store == "All Stores" else [store]
     overview_performance = selected_order_performance(overview_stores, selected_month)
-    overview_lark = persisted_lark_frames(
-        lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
-        LARK_SNAPSHOT_SCHEMA_VERSION,
-    )
+    # Streamlit Cloud deploys the encrypted published snapshot, while local
+    # development may also have the expanded snapshot/lark directory.
+    overview_lark = saved_lark_frames()
     fulfillment = fulfillment_revenue_frame(
         overview_performance,
         overview_lark["total"] if overview_lark else pd.DataFrame(),

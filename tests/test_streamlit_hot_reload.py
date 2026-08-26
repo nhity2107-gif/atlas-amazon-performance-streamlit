@@ -19,6 +19,13 @@ class StreamlitHotReloadTests(unittest.TestCase):
         self.assertNotIn("Mật khẩu Team KPI", source)
         self.assertNotIn("Mở Team KPI", source)
 
+    def test_overview_uses_local_or_published_lark_snapshot(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+        source = app_path.read_text(encoding="utf-8")
+
+        self.assertIn("def saved_lark_frames()", source)
+        self.assertIn("overview_lark = saved_lark_frames()", source)
+
     def test_app_recovers_when_snapshot_modules_were_cached_without_new_api(self) -> None:
         original_target = target_data.daily_targets_for_month
         original_lark = lark_snapshot_store.load_encrypted_lark_snapshot
