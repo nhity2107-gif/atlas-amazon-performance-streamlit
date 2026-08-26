@@ -588,9 +588,39 @@ def render_top_record_table(
     total_revenue: float,
     config: LarkConfig | None,
 ) -> None:
-    products = top_record_id_frame(records, total_revenue, limit=50)
+    products = top_record_id_frame(records, total_revenue)
     if products.empty:
-        st.warning("Chưa tìm thấy Record ID hợp lệ để lập bảng xếp hạng.")
+        st.warning("Chưa tìm thấy Record ID có sale trong phạm vi đã chọn.")
+        return
+
+    filter_columns = st.columns(3)
+    selected_idea_by = filter_columns[0].multiselect(
+        "Idea By",
+        sorted(value for value in products["Idea By"].dropna().unique() if value),
+        key="product_idea_by_filter",
+    )
+    selected_managed_by = filter_columns[1].multiselect(
+        "Managed By",
+        sorted(value for value in products["Managed By"].dropna().unique() if value),
+        key="product_managed_by_filter",
+    )
+    selected_ads_by = filter_columns[2].multiselect(
+        "Ads By",
+        sorted(value for value in products["Ads By"].dropna().unique() if value),
+        key="product_ads_by_filter",
+    )
+    for column, selected_values in (
+        ("Idea By", selected_idea_by),
+        ("Managed By", selected_managed_by),
+        ("Ads By", selected_ads_by),
+    ):
+        if selected_values:
+            products = products[products[column].isin(selected_values)].copy()
+    products = products.reset_index(drop=True)
+    products["#"] = range(1, len(products) + 1)
+    st.caption(f"Đang hiển thị {len(products):,} Record ID có sale · Revenue giảm dần.")
+    if products.empty:
+        st.info("Không có Record ID phù hợp với các bộ lọc nhân sự.")
         return
 
     image_data_urls: dict[str, str] = {}
@@ -616,7 +646,7 @@ def render_top_record_table(
             )
             st.caption(
                 f"Ảnh Lark: đã tải {len(image_data_urls)}/{len(requested_image_tokens)} "
-                "ảnh của Top Record ID qua API."
+                "ảnh Record ID qua API."
             )
 
     display_products = products[
@@ -643,7 +673,7 @@ def render_top_record_table(
         lambda value: f"{float(value):.2f}%"
     )
     product_row_height = 52
-    product_table_height = 42 + len(display_products) * product_row_height
+    product_table_height = min(780, 42 + len(display_products) * product_row_height)
     st.dataframe(
         display_products,
         hide_index=True,
@@ -1436,11 +1466,12 @@ if page.startswith("01"):
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page.startswith("02"):
-    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Top sản phẩm theo Record ID</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Sản phẩm có sale theo Record ID</h3></div>', unsafe_allow_html=True)
     st.caption(
         "Dữ liệu Order được nạp tự động từ snapshot đã lưu và gộp toàn bộ ASIN "
         "cùng sản phẩm theo Record ID từ Lark. "
-        "Share được tính trên tổng Revenue của store đang chọn."
+        "Danh sách gồm tất cả Record ID có Revenue > 0 và được xếp Revenue giảm dần. "
+        "Share được tính trên tổng Revenue của store và thời gian đang chọn."
     )
     config, missing_secrets = lark_config()
     lark = None
@@ -1488,6 +1519,29 @@ elif page.startswith("02"):
         ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
     )
     product_performance = selected_order_performance(required_product_stores, selected_month)
+    if not product_performance.empty:
+        product_dates = pd.to_datetime(product_performance["Date"], errors="coerce")
+        valid_product_dates = product_dates.dropna()
+        if not valid_product_dates.empty:
+            product_min_date = valid_product_dates.min().date()
+            product_max_date = valid_product_dates.max().date()
+            selected_product_dates = st.date_input(
+                "Thời gian",
+                value=(product_min_date, product_max_date),
+                min_value=product_min_date,
+                max_value=product_max_date,
+                format="DD/MM/YYYY",
+                key=f"product_date_range_{selected_month}_{store}",
+            )
+            if isinstance(selected_product_dates, (tuple, list)) and len(selected_product_dates) == 2:
+                product_start_date, product_end_date = selected_product_dates
+                product_performance = product_performance[
+                    product_dates.dt.date.between(product_start_date, product_end_date)
+                ].copy()
+                st.caption(
+                    f"Order theo Purchase Date: {product_start_date:%d/%m/%Y}–"
+                    f"{product_end_date:%d/%m/%Y}."
+                )
     if not product_performance.empty:
         if missing_secrets:
             st.warning(
@@ -1555,7 +1609,7 @@ elif page.startswith("02"):
             )
     else:
         st.warning(
-            "Chưa đồng bộ dữ liệu Order để lập Top 50 Record ID. Hãy chạy pipeline cập nhật "
+            "Không có dữ liệu Order trong phạm vi đang chọn. Hãy đổi bộ lọc hoặc chạy pipeline cập nhật "
             "snapshot/dashboard_snapshot.csv."
         )
 
