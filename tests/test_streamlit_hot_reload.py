@@ -9,6 +9,7 @@ from streamlit.testing.v1 import AppTest
 import target_data
 import lark_snapshot_store
 import ads_data
+import team_kpi
 
 
 class StreamlitHotReloadTests(unittest.TestCase):
@@ -30,9 +31,11 @@ class StreamlitHotReloadTests(unittest.TestCase):
         original_target = target_data.daily_targets_for_month
         original_lark = lark_snapshot_store.load_encrypted_lark_snapshot
         original_ads = ads_data.load_encrypted_ads_snapshot_with_keys
+        original_idea_cohort_end = team_kpi.idea_validation_cohort_end
         delattr(target_data, "daily_targets_for_month")
         delattr(lark_snapshot_store, "load_encrypted_lark_snapshot")
         delattr(ads_data, "load_encrypted_ads_snapshot_with_keys")
+        delattr(team_kpi, "idea_validation_cohort_end")
         try:
             app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
             app = AppTest.from_file(str(app_path)).run(timeout=60)
@@ -44,6 +47,7 @@ class StreamlitHotReloadTests(unittest.TestCase):
             self.assertTrue(
                 hasattr(ads_data, "load_encrypted_ads_snapshot_with_keys")
             )
+            self.assertTrue(hasattr(team_kpi, "idea_validation_cohort_end"))
         finally:
             if not hasattr(target_data, "daily_targets_for_month"):
                 target_data.daily_targets_for_month = original_target
@@ -51,9 +55,12 @@ class StreamlitHotReloadTests(unittest.TestCase):
                 lark_snapshot_store.load_encrypted_lark_snapshot = original_lark
             if not hasattr(ads_data, "load_encrypted_ads_snapshot_with_keys"):
                 ads_data.load_encrypted_ads_snapshot_with_keys = original_ads
+            if not hasattr(team_kpi, "idea_validation_cohort_end"):
+                team_kpi.idea_validation_cohort_end = original_idea_cohort_end
             importlib.reload(target_data)
             importlib.reload(lark_snapshot_store)
             importlib.reload(ads_data)
+            importlib.reload(team_kpi)
 
 
 if __name__ == "__main__":

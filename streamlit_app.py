@@ -26,12 +26,7 @@ from snapshot_store import (
     load_snapshot_metadata,
 )
 import target_data as _target_data
-from team_kpi import (
-    asin_new_revenue_from_custom_cohort,
-    asin_portfolio_revenue,
-    fbm_asin_rows,
-    workflow_kpi_window_end,
-)
+import team_kpi as _team_kpi
 
 
 # Streamlit Cloud hot-reloads the app file but can retain older imported
@@ -46,6 +41,12 @@ load_encrypted_ads_snapshot_with_keys = (
 )
 normalize_person = _ads_data.normalize_person
 select_ads_summary = _ads_data.select_ads_summary
+_team_kpi = importlib.reload(importlib.import_module("team_kpi"))
+asin_new_revenue_from_custom_cohort = _team_kpi.asin_new_revenue_from_custom_cohort
+asin_portfolio_revenue = _team_kpi.asin_portfolio_revenue
+fbm_asin_rows = _team_kpi.fbm_asin_rows
+idea_validation_cohort_end = _team_kpi.idea_validation_cohort_end
+workflow_kpi_window_end = _team_kpi.workflow_kpi_window_end
 _lark_snapshot_store = importlib.reload(
     importlib.import_module("lark_snapshot_store")
 )
@@ -905,6 +906,7 @@ def employee_kpi_tables(
     ].fillna(0)
 
     cohort_start = validation_cohort_start(window_end)
+    idea_cohort_end = idea_validation_cohort_end(window_end)
     records["validated"] = records["Units"].ge(10)
 
     def owner_records(column: str) -> pd.DataFrame:
@@ -919,7 +921,7 @@ def employee_kpi_tables(
         idea_events["handover_date"], window_start, window_end
     )
     idea_events["in_cohort"] = in_lark_calendar_window(
-        idea_events["handover_date"], cohort_start, window_end
+        idea_events["handover_date"], cohort_start, idea_cohort_end
     )
     idea = (
         idea_events.groupby("record_id", as_index=False)
@@ -2093,7 +2095,8 @@ else:
                     st.markdown("### KPI theo nhân sự · Lark calendar + Purchase Month LA")
                     st.caption(
                         "Idea theo MRND IDEA Pickup Date; Product output và Product Support theo "
-                        "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, còn "
+                        "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, trong đó "
+                        "Idea Validated chốt ngày 20 tháng này, còn Product Sold và "
                         "Product/Ads New Revenue theo từng ASIN có Custom Check Done từ ngày 20 "
                         "tháng trước đến cuối time window. Toàn bộ Order và Ads FBA bị loại khỏi "
                         "các bảng KPI nhân sự."
@@ -2162,7 +2165,7 @@ else:
                         st.markdown(
                             """
 - **Phạm vi fulfillment:** toàn bộ bảng KPI nhân sự chỉ dùng ASIN có `Fulfill By = FBM`; Order, Revenue, Units, ASIN count và Ads Spend/Sales/Orders của FBA đều bị loại. Overview và Ads Performance tổng vẫn giữ FBA + FBM để đối soát store.
-- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID FBM có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units FBM ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN FBM thuộc Idea ownership.
+- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID FBM có Pickup Date từ ngày 20 tháng trước đến ngày 20 tháng này. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units FBM ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN FBM thuộc Idea ownership.
 - **Product:** Qualified ASINs là unique ASIN FBM theo Custom Check Done Date; `Listing Cohort` là unique Record ID FBM có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units FBM ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN FBM thuộc Managed By; `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
 - **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN FBM thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID FBM có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD rồi loại mọi dòng map tới ASIN FBA trước khi gộp KPI, kể cả campaign `Support` hoặc marker `LINH`/`HIEU`/`HA`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
@@ -2183,7 +2186,7 @@ else:
                                     "Portfolio_Records_15000_Revenue": "Record_IDs (≥$15K Revenue)",
                                     "Portfolio_Records_20000_Revenue": "Record_IDs (≥$20K Revenue)",
                                     "Cohort_Records": (
-                                        f"Pickup_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                        f"Pickup_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{idea_validation_cohort_end(window_end):%d/%m})"
                                         if title.startswith("Idea")
                                         else f"Listing_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
                                         if title.startswith("Product ·")

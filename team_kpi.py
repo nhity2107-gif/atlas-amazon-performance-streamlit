@@ -34,6 +34,11 @@ def workflow_kpi_window_end(
     return selected_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
 
+def idea_validation_cohort_end(window_end: pd.Timestamp) -> pd.Timestamp:
+    """Cap the Idea validation cohort at day 20 of the selected month."""
+    return pd.Timestamp(window_end).normalize().replace(day=20)
+
+
 def asin_portfolio_revenue(
     attributed_asins: pd.DataFrame,
     owner_column: str,

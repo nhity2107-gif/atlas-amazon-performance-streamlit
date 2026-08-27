@@ -149,15 +149,18 @@ của dòng ASIN sau khi lọc ngày.
 
 - Validated Record và Sold Record: Record ID có tổng Units `>= 10`.
 - Winner Record: Record ID có Revenue tháng `>= $5,000`.
-- Validation/New cohort: từ ngày 20 của tháng trước đến ngày cuối tháng đang
-  chọn, dùng ngày lịch Lark của đúng stage.
+- Idea Validation cohort: từ ngày 20 của tháng trước đến ngày 20 tháng đang
+  chọn, dùng Pickup Date theo lịch Lark.
+- Product Sold và Product/Ads New cohort: từ ngày 20 của tháng trước đến ngày
+  cuối tháng đang chọn, dùng ngày lịch Lark của đúng stage.
 
 ## 7. KPI theo vị trí
 
 ### Team Idea
 
 - Qualified Ideas: Pickup Date trong tháng, weight 40%.
-- Validated Rate: Validated Records / Cohort Records, weight 30%.
+- Validated Rate: Validated Records / Cohort Records trong Pickup cohort ngày
+  20 tháng trước đến ngày 20 tháng này, weight 30%.
 - Revenue: tổng Revenue tháng của toàn bộ ASIN thuộc ownership của nhân sự Idea,
   weight 30%.
 

@@ -8,11 +8,16 @@ from team_kpi import (
     asin_new_revenue_from_custom_cohort,
     asin_portfolio_revenue,
     fbm_asin_rows,
+    idea_validation_cohort_end,
     workflow_kpi_window_end,
 )
 
 
 class TeamKpiTests(unittest.TestCase):
+    def test_idea_validation_cohort_ends_on_day_20_of_selected_month(self) -> None:
+        result = idea_validation_cohort_end(pd.Timestamp("2026-08-31 23:59:59"))
+        self.assertEqual(result, pd.Timestamp("2026-08-20"))
+
     def test_workflow_window_uses_latest_lark_refresh_not_order_date(self) -> None:
         result = workflow_kpi_window_end(
             "2026-08",
