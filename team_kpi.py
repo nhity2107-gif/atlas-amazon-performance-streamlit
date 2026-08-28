@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from reporting_period import period_bounds
 
 
 def fbm_asin_rows(attributed_asins: pd.DataFrame) -> pd.DataFrame:
@@ -19,16 +20,16 @@ def workflow_kpi_window_end(
     fallback: pd.Timestamp,
 ) -> pd.Timestamp:
     """End Lark workflow KPI at its latest refresh, independent of Order data."""
+    period_start, period_end = period_bounds(selected_month)
     updated_at = pd.to_datetime(lark_snapshot_updated_at, errors="coerce", utc=True)
     if pd.isna(updated_at):
         selected_end = pd.Timestamp(fallback).normalize()
     else:
         lark_date = updated_at.tz_convert("Asia/Ho_Chi_Minh").tz_localize(None).normalize()
-        lark_month = lark_date.strftime("%Y-%m")
-        if selected_month == lark_month:
+        if period_start <= lark_date <= period_end:
             selected_end = lark_date
-        elif selected_month < lark_month:
-            selected_end = pd.Timestamp(f"{selected_month}-01") + pd.offsets.MonthEnd(0)
+        elif lark_date > period_end:
+            selected_end = period_end
         else:
             selected_end = pd.Timestamp(fallback).normalize()
     return selected_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)

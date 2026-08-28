@@ -19,6 +19,7 @@ from product_data import (
     revenue_milestone_counts,
     top_record_id_frame,
 )
+from reporting_period import HALF_YEAR_PERIODS, period_bounds, period_label, period_months
 from snapshot_store import (
     SnapshotError,
     empty_snapshot,
@@ -89,6 +90,15 @@ st.markdown(
     .stApp { background:#f4f6f8; color:var(--ink); }
     [data-testid="stSidebar"] { background:#131b2b; }
     [data-testid="stSidebar"] * { color:#e9eef7; }
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background:#ffffff; border-color:#d8deea;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div * {
+        color:#172033 !important; font-weight:600;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] svg {
+        fill:#172033; color:#172033;
+    }
     [data-testid="stSidebar"] .stRadio label {
         padding:.52rem .7rem; border-radius:.6rem; margin:.12rem 0;
     }
@@ -417,7 +427,9 @@ def selected_order_performance(
     selected = persisted[persisted["Store"].isin(stores)].copy()
     if month and not selected.empty:
         dates = pd.to_datetime(selected["Date"], errors="coerce")
-        selected = selected[dates.dt.strftime("%Y-%m").eq(month)].copy()
+        selected = selected[
+            dates.dt.strftime("%Y-%m").isin(period_months(month))
+        ].copy()
     return selected
 
 
@@ -427,7 +439,11 @@ def available_order_months() -> list[str]:
         return [REPORT_START.strftime("%Y-%m")]
     dates = pd.to_datetime(persisted["Date"], errors="coerce")
     months = sorted(dates.dt.strftime("%Y-%m").dropna().unique(), reverse=True)
-    return months or [REPORT_START.strftime("%Y-%m")]
+    available = months or [REPORT_START.strftime("%Y-%m")]
+    for period, (start_month, end_month) in HALF_YEAR_PERIODS.items():
+        if any(start_month <= month <= end_month for month in available):
+            available.append(period)
+    return available
 
 
 def live_ads_performance(
@@ -1217,7 +1233,7 @@ with st.sidebar:
     selected_month = st.selectbox(
         "Tháng báo cáo",
         month_options,
-        format_func=lambda value: pd.Timestamp(f"{value}-01").strftime("Tháng %m/%Y"),
+        format_func=period_label,
     )
     st.markdown("**Live month-to-date**")
     st.caption("Order + Ads snapshot đã xử lý")
@@ -1227,7 +1243,7 @@ with st.sidebar:
 top_left, top_right = st.columns([2, 1])
 with top_left:
     st.markdown('<div class="atlas-eyebrow">PERFORMANCE SNAPSHOT</div>', unsafe_allow_html=True)
-    report_month_label = pd.Timestamp(f"{selected_month}-01").strftime("Tháng %m/%Y")
+    report_month_label = period_label(selected_month)
     st.markdown(f'<div class="atlas-title">{report_month_label}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="atlas-subtitle">Order Report thực tế · Purchase Time theo America/Los_Angeles</div>',
@@ -1847,7 +1863,7 @@ else:
                 performance = performance[
                     pd.to_datetime(performance["Date"], errors="coerce")
                     .dt.strftime("%Y-%m")
-                    .eq(selected_month)
+                    .isin(period_months(selected_month))
                 ].copy()
             if "Date" not in performance.columns:
                 # A legacy single-month snapshot can still be used for its report month.
@@ -1863,9 +1879,9 @@ else:
                 st.stop()
             report_start = performance["Date"].min().normalize()
             report_end = performance["Date"].max().normalize()
-            window_start = pd.Timestamp(f"{selected_month}-01")
+            window_start, _ = period_bounds(selected_month)
             st.success(
-                f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
+                f"Đã nạp kỳ {period_label(selected_month)} từ snapshot · "
                 f"Order/Revenue Los Angeles hiện có {report_start:%d/%m/%Y}–"
                 f"{report_end:%d/%m/%Y}."
             )
