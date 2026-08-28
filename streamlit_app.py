@@ -96,8 +96,18 @@ st.markdown(
     [data-testid="stSidebar"] div[data-baseweb="select"] > div * {
         color:#172033 !important; font-weight:600;
     }
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] input {
+        color:#172033 !important;
+        -webkit-text-fill-color:#172033 !important;
+        opacity:1 !important;
+    }
     [data-testid="stSidebar"] div[data-baseweb="select"] svg {
         fill:#172033; color:#172033;
+    }
+    div[data-baseweb="popover"] [role="option"],
+    div[data-baseweb="popover"] [role="option"] * {
+        color:#172033 !important;
+        -webkit-text-fill-color:#172033 !important;
     }
     [data-testid="stSidebar"] .stRadio label {
         padding:.52rem .7rem; border-radius:.6rem; margin:.12rem 0;
