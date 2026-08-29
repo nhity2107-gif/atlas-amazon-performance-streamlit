@@ -88,7 +88,9 @@ nguồn được cập nhật, timezone, phạm vi ngày và số dòng snapshot
   `report_as_of_date`; tuyệt đối không chia đều target tháng cho từng ngày.
 - `Revenue 2025 MTD` là tổng `DAILY REV 2025` trên cùng số ngày. Dashboard hiển
   thị `Actual vs Forecast = Actual 2026 / Forecast 2026 - 1` và
-  `Actual vs 2025 = Actual 2026 / Revenue 2025 - 1`.
+  `YoY MTD = Actual 2026 / Revenue 2025`. YoY là chỉ số so sánh: `100%` nghĩa
+  là bằng năm trước, `163.86%` nghĩa là doanh thu bằng 163.86% năm trước
+  (tương đương tăng trưởng `+63.86%`).
 - Actual 2026 lấy từ Order snapshot FBM theo Purchase Date Los Angeles. Ngày
   chốt so sánh lấy từ `report_as_of_date`, không lấy Purchase Date mới nhất.
   Tháng đã kết thúc dùng toàn bộ các dòng ngày của tháng.
@@ -147,15 +149,18 @@ của dòng ASIN sau khi lọc ngày.
 
 - Validated Record và Sold Record: Record ID có tổng Units `>= 10`.
 - Winner Record: Record ID có Revenue tháng `>= $5,000`.
-- Validation/New cohort: từ ngày 20 của tháng trước đến ngày cuối tháng đang
-  chọn, dùng ngày lịch Lark của đúng stage.
+- Idea Validation cohort: từ ngày 20 của tháng trước đến ngày 20 tháng đang
+  chọn, dùng Pickup Date theo lịch Lark.
+- Product Sold và Product/Ads New cohort: từ ngày 20 của tháng trước đến ngày
+  cuối tháng đang chọn, dùng ngày lịch Lark của đúng stage.
 
 ## 7. KPI theo vị trí
 
 ### Team Idea
 
 - Qualified Ideas: Pickup Date trong tháng, weight 40%.
-- Validated Rate: Validated Records / Cohort Records, weight 30%.
+- Validated Rate: Validated Records / Cohort Records trong Pickup cohort ngày
+  20 tháng trước đến ngày 20 tháng này, weight 30%.
 - Revenue: tổng Revenue tháng của toàn bộ ASIN thuộc ownership của nhân sự Idea,
   weight 30%.
 

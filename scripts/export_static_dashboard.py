@@ -29,7 +29,7 @@ from target_data import (
     target_for_month,
     target_progress,
 )
-from team_kpi import workflow_kpi_window_end
+from team_kpi import idea_validation_cohort_end, workflow_kpi_window_end
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -177,6 +177,7 @@ def export(month: str, output: Path) -> None:
         order_end,
     )
     cohort_start = (start - pd.DateOffset(months=1)).replace(day=20)
+    idea_cohort_end = idea_validation_cohort_end(end)
 
     revenue = float(performance["Revenue"].sum())
     orders = int(performance["Orders"].sum())
@@ -291,7 +292,7 @@ def export(month: str, output: Path) -> None:
     idea_events = lark["ideas"].copy()
     idea_events["qualified"] = in_window(idea_events["handover_date"], start, end)
     idea_events["in_cohort"] = in_window(
-        idea_events["handover_date"], cohort_start, end
+        idea_events["handover_date"], cohort_start, idea_cohort_end
     )
     idea_events = (
         idea_events.groupby("record_id", as_index=False)
@@ -510,7 +511,7 @@ def export(month: str, output: Path) -> None:
     <section id="team" class="page"><div class="eyebrow">TEAM KPI · RECORD LEVEL</div><h1 class="title">Workflow KPI từ Lark</h1><div class="sub">Lark calendar date không đổi timezone · Revenue/Units theo Purchase Month Los Angeles</div>
     <div class="dark-strip"><div class="metric"><span>Qualified Ideas</span><strong>{idea_count:,}</strong><small>Unique Record ID</small></div><div class="metric"><span>Listing Done</span><strong>{int(listing_mask.sum()):,}</strong><small>TOTAL ASIN record count</small></div><div class="metric"><span>Custom Check Done</span><strong>{int(custom_mask.sum()):,}</strong><small>TOTAL ASIN record count</small></div><div class="metric"><span>Asset Points</span><strong>{asset_points:,}</strong><small>CLIPARTS</small></div><div class="metric"><span>Ads Tested</span><strong>{int(ads_mask.sum()):,}</strong><small>TOTAL ASIN record count</small></div></div>
     <div class="grid"><div class="metric"><span>Listing Lead Time</span><strong>{listing_lead:.2f} days</strong></div><div class="metric"><span>Custom Lead Time</span><strong>{custom_lead:.2f} days</strong></div><div class="metric"><span>Attributed Revenue</span><strong>{format_money(records['Revenue'].sum(),0)}</strong></div><div class="metric"><span>Winner Records</span><strong>{int(records['Revenue'].ge(5000).sum()):,}</strong><small>Revenue ≥ $5,000</small></div></div>
-    <div class="card"><h2>Idea · 40% Output / 30% Efficiency / 30% Business</h2><div class="desc">Portfolio ≥10 Units dùng toàn bộ Record ID thuộc ownership; Pickup Cohort từ {cohort_start:%d/%m/%Y} đến {end:%d/%m/%Y}; Validated là Record ID trong cohort có tổng Units ≥10.</div><div class="table-scroll">{table_html(idea_summary)}</div></div>
+    <div class="card"><h2>Idea · 40% Output / 30% Efficiency / 30% Business</h2><div class="desc">Portfolio ≥10 Units dùng toàn bộ Record ID thuộc ownership; Pickup Cohort từ {cohort_start:%d/%m/%Y} đến {idea_cohort_end:%d/%m/%Y}; Validated là Record ID trong cohort có tổng Units ≥10.</div><div class="table-scroll">{table_html(idea_summary)}</div></div>
     <div class="card"><h2>Product · 30% Output / 20% Efficiency / 50% Business</h2><div class="desc">Portfolio ≥10 Units dùng toàn bộ Record ID thuộc ownership; Listing Cohort từ {cohort_start:%d/%m/%Y} đến {end:%d/%m/%Y}; Sold là Record ID trong cohort có tổng Units ≥10.</div><div class="table-scroll">{table_html(product_summary)}</div></div>
     <div class="card"><h2>Product Support · 80% Output / 20% Asset</h2><div class="table-scroll">{table_html(support_summary)}</div></div>
     <div class="card"><h2>Ads · 45% Efficiency / 55% Business</h2><div class="desc">Tháng này Ads cohort tạm dùng Custom Check Done Date từ {cohort_start:%d/%m/%Y} đến {end:%d/%m/%Y}. New Winner là Record ID trong cohort có Revenue tháng ≥$5K. Các mốc Revenue dùng toàn bộ portfolio ownership.</div><div class="table-scroll">{table_html(ads_display)}</div></div></section>

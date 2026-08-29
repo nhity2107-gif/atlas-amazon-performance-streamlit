@@ -171,9 +171,9 @@ def fulfillment_revenue_frame(
 def top_record_id_frame(
     records: pd.DataFrame,
     total_revenue: float,
-    limit: int = 50,
+    limit: int | None = None,
 ) -> pd.DataFrame:
-    """Regroup revenue by Record ID and return the ranked display frame."""
+    """Regroup sold Record IDs and return them ranked by Revenue descending."""
     columns = [
         "#",
         "Image",
@@ -218,10 +218,12 @@ def top_record_id_frame(
     ranked = (
         frame.groupby("record_id", as_index=False)
         .agg(aggregation)
+        .loc[lambda value: value["Revenue"].gt(0)]
         .sort_values(["Revenue", "record_id"], ascending=[False, True])
-        .head(limit)
         .reset_index(drop=True)
     )
+    if limit is not None:
+        ranked = ranked.head(limit).reset_index(drop=True)
     for owner_column in ("idea_by", "managed_by", "custom_by", "ads_by"):
         ranked[owner_column] = ranked[owner_column].fillna("")
     ranked["Share"] = ranked["Revenue"].div(total_revenue or 1).mul(100)

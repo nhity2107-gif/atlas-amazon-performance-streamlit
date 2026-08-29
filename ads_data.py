@@ -9,6 +9,7 @@ from typing import Any, Iterable
 import unicodedata
 
 import pandas as pd
+from reporting_period import period_months
 from cryptography.fernet import Fernet, InvalidToken
 
 from fulfillment_rules import apply_fulfillment_overrides
@@ -701,8 +702,14 @@ def select_ads_summary(
 ) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     if snapshot is None:
         return pd.DataFrame(columns=SUMMARY_COLUMNS), []
-    selected = snapshot["summary"].loc[snapshot["summary"]["Month"].eq(month)].copy()
-    imports = [item for item in snapshot.get("imports", []) if item.get("month") == month]
+    selected_months = period_months(month)
+    selected = snapshot["summary"].loc[
+        snapshot["summary"]["Month"].isin(selected_months)
+    ].copy()
+    imports = [
+        item for item in snapshot.get("imports", [])
+        if item.get("month") in selected_months
+    ]
     if store != "All Stores":
         selected = selected.loc[selected["Store"].eq(store)]
         imports = [item for item in imports if item.get("store") == store]

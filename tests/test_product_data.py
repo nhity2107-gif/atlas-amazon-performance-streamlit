@@ -67,7 +67,7 @@ class ProductDataTests(unittest.TestCase):
         self.assertEqual(result["Custom By"].tolist(), ["Carol", ""])
         self.assertEqual(result["Ads By"].tolist(), ["Adam", ""])
 
-    def test_only_top_50_record_ids_are_returned(self) -> None:
+    def test_all_sold_record_ids_are_returned_in_revenue_order(self) -> None:
         records = pd.DataFrame(
             [
                 {"record_id": f"rec{index:02d}", "Revenue": index, "Orders": 1, "Units": 1, "asin_count": 1}
@@ -77,9 +77,22 @@ class ProductDataTests(unittest.TestCase):
 
         result = top_record_id_frame(records, total_revenue=float(records["Revenue"].sum()))
 
-        self.assertEqual(len(result), 50)
+        self.assertEqual(len(result), 59)
         self.assertEqual(result.iloc[0]["Record ID"], "rec59")
-        self.assertEqual(result.iloc[-1]["Record ID"], "rec10")
+        self.assertEqual(result.iloc[-1]["Record ID"], "rec01")
+        self.assertNotIn("rec00", result["Record ID"].tolist())
+
+    def test_limit_remains_available_for_explicit_callers(self) -> None:
+        records = pd.DataFrame(
+            [
+                {"record_id": f"rec{index:02d}", "Revenue": index, "Orders": 1, "Units": 1, "asin_count": 1}
+                for index in range(10)
+            ]
+        )
+
+        result = top_record_id_frame(records, total_revenue=45, limit=3)
+
+        self.assertEqual(result["Record ID"].tolist(), ["rec09", "rec08", "rec07"])
 
     def test_order_hints_create_records_without_employee_names(self) -> None:
         performance = pd.DataFrame(

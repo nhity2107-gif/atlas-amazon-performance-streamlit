@@ -77,6 +77,7 @@ class TargetDataTests(unittest.TestCase):
         self.assertEqual(result["prior_mtd"], 800)
         self.assertAlmostEqual(result["vs_forecast"], -0.25)
         self.assertAlmostEqual(result["vs_2025"], 0.5)
+        self.assertAlmostEqual(result["yoy_index"], 1.5)
         self.assertEqual(result["forecast_full_month"], 3100)
 
     def test_completed_month_uses_every_daily_value(self) -> None:

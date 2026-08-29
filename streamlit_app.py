@@ -19,6 +19,7 @@ from product_data import (
     revenue_milestone_counts,
     top_record_id_frame,
 )
+from reporting_period import HALF_YEAR_PERIODS, period_bounds, period_label, period_months
 from snapshot_store import (
     SnapshotError,
     empty_snapshot,
@@ -26,12 +27,7 @@ from snapshot_store import (
     load_snapshot_metadata,
 )
 import target_data as _target_data
-from team_kpi import (
-    asin_new_revenue_from_custom_cohort,
-    asin_portfolio_revenue,
-    fbm_asin_rows,
-    workflow_kpi_window_end,
-)
+import team_kpi as _team_kpi
 
 
 # Streamlit Cloud hot-reloads the app file but can retain older imported
@@ -46,6 +42,12 @@ load_encrypted_ads_snapshot_with_keys = (
 )
 normalize_person = _ads_data.normalize_person
 select_ads_summary = _ads_data.select_ads_summary
+_team_kpi = importlib.reload(importlib.import_module("team_kpi"))
+asin_new_revenue_from_custom_cohort = _team_kpi.asin_new_revenue_from_custom_cohort
+asin_portfolio_revenue = _team_kpi.asin_portfolio_revenue
+fbm_asin_rows = _team_kpi.fbm_asin_rows
+idea_validation_cohort_end = _team_kpi.idea_validation_cohort_end
+workflow_kpi_window_end = _team_kpi.workflow_kpi_window_end
 _lark_snapshot_store = importlib.reload(
     importlib.import_module("lark_snapshot_store")
 )
@@ -88,6 +90,25 @@ st.markdown(
     .stApp { background:#f4f6f8; color:var(--ink); }
     [data-testid="stSidebar"] { background:#131b2b; }
     [data-testid="stSidebar"] * { color:#e9eef7; }
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div {
+        background:#ffffff; border-color:#d8deea;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div * {
+        color:#172033 !important; font-weight:600;
+    }
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] input {
+        color:#172033 !important;
+        -webkit-text-fill-color:#172033 !important;
+        opacity:1 !important;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] svg {
+        fill:#172033; color:#172033;
+    }
+    div[data-baseweb="popover"] [role="option"],
+    div[data-baseweb="popover"] [role="option"] * {
+        color:#172033 !important;
+        -webkit-text-fill-color:#172033 !important;
+    }
     [data-testid="stSidebar"] .stRadio label {
         padding:.52rem .7rem; border-radius:.6rem; margin:.12rem 0;
     }
@@ -416,7 +437,9 @@ def selected_order_performance(
     selected = persisted[persisted["Store"].isin(stores)].copy()
     if month and not selected.empty:
         dates = pd.to_datetime(selected["Date"], errors="coerce")
-        selected = selected[dates.dt.strftime("%Y-%m").eq(month)].copy()
+        selected = selected[
+            dates.dt.strftime("%Y-%m").isin(period_months(month))
+        ].copy()
     return selected
 
 
@@ -426,7 +449,11 @@ def available_order_months() -> list[str]:
         return [REPORT_START.strftime("%Y-%m")]
     dates = pd.to_datetime(persisted["Date"], errors="coerce")
     months = sorted(dates.dt.strftime("%Y-%m").dropna().unique(), reverse=True)
-    return months or [REPORT_START.strftime("%Y-%m")]
+    available = months or [REPORT_START.strftime("%Y-%m")]
+    for period, (start_month, end_month) in HALF_YEAR_PERIODS.items():
+        if any(start_month <= month <= end_month for month in available):
+            available.append(period)
+    return available
 
 
 def live_ads_performance(
@@ -542,9 +569,12 @@ def published_lark_frames(
     return load_encrypted_lark_snapshot(PUBLISHED_LARK_SNAPSHOT_PATH, publish_key)
 
 
-def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
-    version = lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR)
-    local_saved = persisted_lark_frames(version, LARK_SNAPSHOT_SCHEMA_VERSION)
+def saved_lark_frames() -> dict | None:
+    """Return the newest local or published Lark snapshot available."""
+    local_saved = persisted_lark_frames(
+        lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
+        LARK_SNAPSHOT_SCHEMA_VERSION,
+    )
     published_version = (
         PUBLISHED_LARK_SNAPSHOT_PATH.stat().st_mtime_ns
         if PUBLISHED_LARK_SNAPSHOT_PATH.exists()
@@ -555,7 +585,11 @@ def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
         LARK_SNAPSHOT_SCHEMA_VERSION,
         dashboard_data_key(),
     )
-    saved = newest_lark_snapshot(local_saved, published_saved)
+    return newest_lark_snapshot(local_saved, published_saved)
+
+
+def latest_lark_frames(config: LarkConfig, refresh: bool = False) -> dict:
+    saved = saved_lark_frames()
     if saved is not None and not refresh:
         return saved
     try:
@@ -588,9 +622,39 @@ def render_top_record_table(
     total_revenue: float,
     config: LarkConfig | None,
 ) -> None:
-    products = top_record_id_frame(records, total_revenue, limit=50)
+    products = top_record_id_frame(records, total_revenue)
     if products.empty:
-        st.warning("Chưa tìm thấy Record ID hợp lệ để lập bảng xếp hạng.")
+        st.warning("Chưa tìm thấy Record ID có sale trong phạm vi đã chọn.")
+        return
+
+    filter_columns = st.columns(3)
+    selected_idea_by = filter_columns[0].multiselect(
+        "Idea By",
+        sorted(value for value in products["Idea By"].dropna().unique() if value),
+        key="product_idea_by_filter",
+    )
+    selected_managed_by = filter_columns[1].multiselect(
+        "Managed By",
+        sorted(value for value in products["Managed By"].dropna().unique() if value),
+        key="product_managed_by_filter",
+    )
+    selected_ads_by = filter_columns[2].multiselect(
+        "Ads By",
+        sorted(value for value in products["Ads By"].dropna().unique() if value),
+        key="product_ads_by_filter",
+    )
+    for column, selected_values in (
+        ("Idea By", selected_idea_by),
+        ("Managed By", selected_managed_by),
+        ("Ads By", selected_ads_by),
+    ):
+        if selected_values:
+            products = products[products[column].isin(selected_values)].copy()
+    products = products.reset_index(drop=True)
+    products["#"] = range(1, len(products) + 1)
+    st.caption(f"Đang hiển thị {len(products):,} Record ID có sale · Revenue giảm dần.")
+    if products.empty:
+        st.info("Không có Record ID phù hợp với các bộ lọc nhân sự.")
         return
 
     image_data_urls: dict[str, str] = {}
@@ -616,7 +680,7 @@ def render_top_record_table(
             )
             st.caption(
                 f"Ảnh Lark: đã tải {len(image_data_urls)}/{len(requested_image_tokens)} "
-                "ảnh của Top Record ID qua API."
+                "ảnh Record ID qua API."
             )
 
     display_products = products[
@@ -643,7 +707,7 @@ def render_top_record_table(
         lambda value: f"{float(value):.2f}%"
     )
     product_row_height = 52
-    product_table_height = 42 + len(display_products) * product_row_height
+    product_table_height = min(780, 42 + len(display_products) * product_row_height)
     st.dataframe(
         display_products,
         hide_index=True,
@@ -868,6 +932,7 @@ def employee_kpi_tables(
     ].fillna(0)
 
     cohort_start = validation_cohort_start(window_end)
+    idea_cohort_end = idea_validation_cohort_end(window_end)
     records["validated"] = records["Units"].ge(10)
 
     def owner_records(column: str) -> pd.DataFrame:
@@ -882,7 +947,7 @@ def employee_kpi_tables(
         idea_events["handover_date"], window_start, window_end
     )
     idea_events["in_cohort"] = in_lark_calendar_window(
-        idea_events["handover_date"], cohort_start, window_end
+        idea_events["handover_date"], cohort_start, idea_cohort_end
     )
     idea = (
         idea_events.groupby("record_id", as_index=False)
@@ -1178,7 +1243,7 @@ with st.sidebar:
     selected_month = st.selectbox(
         "Tháng báo cáo",
         month_options,
-        format_func=lambda value: pd.Timestamp(f"{value}-01").strftime("Tháng %m/%Y"),
+        format_func=period_label,
     )
     st.markdown("**Live month-to-date**")
     st.caption("Order + Ads snapshot đã xử lý")
@@ -1188,7 +1253,7 @@ with st.sidebar:
 top_left, top_right = st.columns([2, 1])
 with top_left:
     st.markdown('<div class="atlas-eyebrow">PERFORMANCE SNAPSHOT</div>', unsafe_allow_html=True)
-    report_month_label = pd.Timestamp(f"{selected_month}-01").strftime("Tháng %m/%Y")
+    report_month_label = period_label(selected_month)
     st.markdown(f'<div class="atlas-title">{report_month_label}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="atlas-subtitle">Order Report thực tế · Purchase Time theo America/Los_Angeles</div>',
@@ -1241,10 +1306,9 @@ if page.startswith("01"):
 
     overview_stores = list(STORES) if store == "All Stores" else [store]
     overview_performance = selected_order_performance(overview_stores, selected_month)
-    overview_lark = persisted_lark_frames(
-        lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
-        LARK_SNAPSHOT_SCHEMA_VERSION,
-    )
+    # Streamlit Cloud deploys the encrypted published snapshot, while local
+    # development may also have the expanded snapshot/lark directory.
+    overview_lark = saved_lark_frames()
     fulfillment = fulfillment_revenue_frame(
         overview_performance,
         overview_lark["total"] if overview_lark else pd.DataFrame(),
@@ -1317,7 +1381,7 @@ if page.startswith("01"):
                 "Revenue 2025 MTD", money(float(fbm_target_progress["prior_mtd"]))
             )
             target_cols[4].metric(
-                "Actual vs 2025", f'{float(fbm_target_progress["vs_2025"]):+.1%}'
+                "YoY MTD", f'{float(fbm_target_progress["yoy_index"]):.1%}'
             )
             st.caption(
                 "So sánh theo từng ngày từ sheet `Revenue Forecast Q1&2 - 2026`: "
@@ -1359,12 +1423,11 @@ if page.startswith("01"):
                         ))
                         .sub(1)
                     )
-                    daily_performance["YoY"] = (
+                    daily_performance["YoY Index"] = (
                         daily_performance["Revenue"]
                         .div(daily_performance["Revenue 2025"].where(
                             daily_performance["Revenue 2025"].ne(0)
                         ))
-                        .sub(1)
                     )
                 st.markdown(f"#### {fulfillment_type}")
                 chart_tab, table_tab = st.tabs(
@@ -1381,7 +1444,7 @@ if page.startswith("01"):
                     if fulfillment_type == "FBM" and not fbm_daily_targets.empty:
                         daily_columns = [
                             "Date", "Revenue", "Forecast 2026", "Vs Forecast",
-                            "Revenue 2025", "YoY", "Quantity",
+                            "Revenue 2025", "YoY Index", "Quantity",
                         ]
                     daily_table = daily_performance[daily_columns].copy()
                     st.dataframe(
@@ -1405,15 +1468,17 @@ if page.startswith("01"):
                             "Revenue 2025": st.column_config.NumberColumn(
                                 "Revenue 2025", format="dollar"
                             ),
-                            "YoY": st.column_config.NumberColumn(
-                                "YoY", format="percent"
+                            "YoY Index": st.column_config.NumberColumn(
+                                "YoY", format="percent",
+                                help="Actual 2026 / Revenue 2025; 100% nghĩa là bằng năm trước",
                             ),
                         },
                     )
                     st.caption(
                         (
                             "FBM · Actual 2026 theo Purchase Date Los Angeles; Forecast 2026 "
-                            "và Revenue 2025 lấy đúng từng ngày trong file forecast."
+                            "và Revenue 2025 lấy đúng từng ngày trong file forecast. "
+                            "YoY = Actual 2026 / Revenue 2025; 100% nghĩa là bằng năm trước."
                             if fulfillment_type == "FBM" and not fbm_daily_targets.empty
                             else f"{fulfillment_type} · Quantity = tổng Units theo Purchase Date."
                         )
@@ -1435,11 +1500,12 @@ if page.startswith("01"):
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page.startswith("02"):
-    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Top sản phẩm theo Record ID</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Sản phẩm có sale theo Record ID</h3></div>', unsafe_allow_html=True)
     st.caption(
         "Dữ liệu Order được nạp tự động từ snapshot đã lưu và gộp toàn bộ ASIN "
         "cùng sản phẩm theo Record ID từ Lark. "
-        "Share được tính trên tổng Revenue của store đang chọn."
+        "Danh sách gồm tất cả Record ID có Revenue > 0 và được xếp Revenue giảm dần. "
+        "Share được tính trên tổng Revenue của store và thời gian đang chọn."
     )
     config, missing_secrets = lark_config()
     lark = None
@@ -1487,6 +1553,29 @@ elif page.startswith("02"):
         ["Wrappiness", "Pawsionate"] if store == "All Stores" else [store]
     )
     product_performance = selected_order_performance(required_product_stores, selected_month)
+    if not product_performance.empty:
+        product_dates = pd.to_datetime(product_performance["Date"], errors="coerce")
+        valid_product_dates = product_dates.dropna()
+        if not valid_product_dates.empty:
+            product_min_date = valid_product_dates.min().date()
+            product_max_date = valid_product_dates.max().date()
+            selected_product_dates = st.date_input(
+                "Thời gian",
+                value=(product_min_date, product_max_date),
+                min_value=product_min_date,
+                max_value=product_max_date,
+                format="DD/MM/YYYY",
+                key=f"product_date_range_{selected_month}_{store}",
+            )
+            if isinstance(selected_product_dates, (tuple, list)) and len(selected_product_dates) == 2:
+                product_start_date, product_end_date = selected_product_dates
+                product_performance = product_performance[
+                    product_dates.dt.date.between(product_start_date, product_end_date)
+                ].copy()
+                st.caption(
+                    f"Order theo Purchase Date: {product_start_date:%d/%m/%Y}–"
+                    f"{product_end_date:%d/%m/%Y}."
+                )
     if not product_performance.empty:
         if missing_secrets:
             st.warning(
@@ -1554,7 +1643,7 @@ elif page.startswith("02"):
             )
     else:
         st.warning(
-            "Chưa đồng bộ dữ liệu Order để lập Top 50 Record ID. Hãy chạy pipeline cập nhật "
+            "Không có dữ liệu Order trong phạm vi đang chọn. Hãy đổi bộ lọc hoặc chạy pipeline cập nhật "
             "snapshot/dashboard_snapshot.csv."
         )
 
@@ -1784,7 +1873,7 @@ else:
                 performance = performance[
                     pd.to_datetime(performance["Date"], errors="coerce")
                     .dt.strftime("%Y-%m")
-                    .eq(selected_month)
+                    .isin(period_months(selected_month))
                 ].copy()
             if "Date" not in performance.columns:
                 # A legacy single-month snapshot can still be used for its report month.
@@ -1800,9 +1889,9 @@ else:
                 st.stop()
             report_start = performance["Date"].min().normalize()
             report_end = performance["Date"].max().normalize()
-            window_start = pd.Timestamp(f"{selected_month}-01")
+            window_start, _ = period_bounds(selected_month)
             st.success(
-                f"Đã nạp Purchase Month {window_start:%m/%Y} từ snapshot · "
+                f"Đã nạp kỳ {period_label(selected_month)} từ snapshot · "
                 f"Order/Revenue Los Angeles hiện có {report_start:%d/%m/%Y}–"
                 f"{report_end:%d/%m/%Y}."
             )
@@ -2032,7 +2121,8 @@ else:
                     st.markdown("### KPI theo nhân sự · Lark calendar + Purchase Month LA")
                     st.caption(
                         "Idea theo MRND IDEA Pickup Date; Product output và Product Support theo "
-                        "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, còn "
+                        "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, trong đó "
+                        "Idea Validated chốt ngày 20 tháng này, còn Product Sold và "
                         "Product/Ads New Revenue theo từng ASIN có Custom Check Done từ ngày 20 "
                         "tháng trước đến cuối time window. Toàn bộ Order và Ads FBA bị loại khỏi "
                         "các bảng KPI nhân sự."
@@ -2101,7 +2191,7 @@ else:
                         st.markdown(
                             """
 - **Phạm vi fulfillment:** toàn bộ bảng KPI nhân sự chỉ dùng ASIN có `Fulfill By = FBM`; Order, Revenue, Units, ASIN count và Ads Spend/Sales/Orders của FBA đều bị loại. Overview và Ads Performance tổng vẫn giữ FBA + FBM để đối soát store.
-- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID FBM có Pickup Date từ ngày 20 tháng trước đến cuối kỳ. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units FBM ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN FBM thuộc Idea ownership.
+- **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID FBM có Pickup Date từ ngày 20 tháng trước đến ngày 20 tháng này. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units FBM ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN FBM thuộc Idea ownership.
 - **Product:** Qualified ASINs là unique ASIN FBM theo Custom Check Done Date; `Listing Cohort` là unique Record ID FBM có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units FBM ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN FBM thuộc Managed By; `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
 - **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN FBM thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID FBM có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD rồi loại mọi dòng map tới ASIN FBA trước khi gộp KPI, kể cả campaign `Support` hoặc marker `LINH`/`HIEU`/`HA`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
@@ -2122,7 +2212,7 @@ else:
                                     "Portfolio_Records_15000_Revenue": "Record_IDs (≥$15K Revenue)",
                                     "Portfolio_Records_20000_Revenue": "Record_IDs (≥$20K Revenue)",
                                     "Cohort_Records": (
-                                        f"Pickup_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                        f"Pickup_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{idea_validation_cohort_end(window_end):%d/%m})"
                                         if title.startswith("Idea")
                                         else f"Listing_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
                                         if title.startswith("Product ·")
