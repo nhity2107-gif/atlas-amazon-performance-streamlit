@@ -293,6 +293,51 @@ class LocalPipelineTests(unittest.TestCase):
                 load_snapshot_metadata(snapshot)["report_as_of_date"], "2026-08-05"
             )
 
+    def test_period_export_replaces_selected_month_and_preserves_other_months(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database = root / "atlas.db"
+            report = root / "orders.txt"
+            snapshot = root / "dashboard.csv"
+            self.write_report(
+                report,
+                [
+                    ["jul", "jul-i", "2026-07-10T08:00:00Z", "Shipped", "MFN", "USD", "B000000001", "sku-1", 1, 10, 0],
+                    ["aug", "aug-i", "2026-08-10T08:00:00Z", "Shipped", "MFN", "USD", "B000000002", "sku-2", 1, 20, 0],
+                ],
+            )
+            ingest_order_report(database, report, "Wrappiness", "daily")
+            export_snapshot(database, snapshot)
+
+            replacement = root / "aug-replacement.txt"
+            self.write_report(
+                replacement,
+                [["aug-new", "aug-new-i", "2026-08-11T08:00:00Z", "Shipped", "MFN", "USD", "B000000003", "sku-3", 1, 30, 0]],
+            )
+            ingest_order_report(
+                database,
+                replacement,
+                "Wrappiness",
+                "monthly",
+                "2026-08-01",
+                "2026-08-31",
+            )
+            export_snapshot(
+                database,
+                snapshot,
+                "2026-08-01",
+                "2026-08-31",
+                as_of_date="2026-08-31",
+            )
+
+            frame = load_snapshot(snapshot)
+            self.assertEqual(set(frame["Date"]), {"2026-07-10", "2026-08-11"})
+            self.assertEqual(set(frame["ASIN"]), {"B000000001", "B000000003"})
+            metadata = load_snapshot_metadata(snapshot)
+            self.assertEqual(metadata["date_min"], "2026-07-10")
+            self.assertEqual(metadata["date_max"], "2026-08-11")
+            self.assertEqual(metadata["report_as_of_date"], "2026-08-31")
+
 
 if __name__ == "__main__":
     unittest.main()

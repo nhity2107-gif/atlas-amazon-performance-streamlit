@@ -103,3 +103,34 @@ def save_snapshot(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     temporary_metadata.replace(sidecar)
+
+
+def upsert_snapshot_period(
+    path: Path,
+    frame: pd.DataFrame,
+    period_start: str,
+    period_end: str,
+    *,
+    source_updated_at: str | None = None,
+    report_as_of_date: str | None = None,
+) -> None:
+    """Replace one reporting period while preserving every other saved month."""
+    incoming = normalize_snapshot(frame)
+    existing = load_snapshot(path)
+    if existing.empty:
+        combined = incoming
+    else:
+        existing_dates = pd.to_datetime(existing["Date"], errors="coerce")
+        start = pd.Timestamp(period_start)
+        end = pd.Timestamp(period_end)
+        keep = existing_dates.isna() | existing_dates.lt(start) | existing_dates.gt(end)
+        combined = pd.concat([existing.loc[keep], incoming], ignore_index=True)
+    combined = combined.sort_values(
+        ["Store", "Date", "Revenue"], ascending=[True, True, False], kind="stable"
+    )
+    save_snapshot(
+        path,
+        combined,
+        source_updated_at=source_updated_at,
+        report_as_of_date=report_as_of_date,
+    )

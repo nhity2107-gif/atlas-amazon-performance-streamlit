@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from snapshot_store import SNAPSHOT_COLUMNS, save_snapshot
+from snapshot_store import SNAPSHOT_COLUMNS, save_snapshot, upsert_snapshot_period
 
 
 ORDER_COLUMNS = {
@@ -334,12 +334,22 @@ def export_snapshot(
     summary["Revenue"] = summary["Revenue"].round(2)
     summary["Orders"] = summary["Orders"].astype(int)
     summary["Units"] = summary["Units"].astype(int)
-    save_snapshot(
-        output_path,
-        summary,
-        source_updated_at=source_updated_at,
-        report_as_of_date=as_of_date,
-    )
+    if period_start and period_end:
+        upsert_snapshot_period(
+            output_path,
+            summary,
+            period_start,
+            period_end,
+            source_updated_at=source_updated_at,
+            report_as_of_date=as_of_date,
+        )
+    else:
+        save_snapshot(
+            output_path,
+            summary,
+            source_updated_at=source_updated_at,
+            report_as_of_date=as_of_date,
+        )
     return {
         "rows": len(summary),
         "revenue": round(float(summary["Revenue"].sum()), 2),
