@@ -40,6 +40,7 @@ load_ads_snapshot = _ads_data.load_ads_snapshot
 load_encrypted_ads_snapshot_with_keys = (
     _ads_data.load_encrypted_ads_snapshot_with_keys
 )
+newest_ads_snapshot = _ads_data.newest_ads_snapshot
 normalize_person = _ads_data.normalize_person
 select_ads_summary = _ads_data.select_ads_summary
 _team_kpi = importlib.reload(importlib.import_module("team_kpi"))
@@ -496,12 +497,11 @@ def live_ads_performance(
 
 def current_ads_snapshot() -> dict | None:
     local = load_ads_snapshot(PERSISTED_ADS_SNAPSHOT_DIR)
-    if local is not None:
-        return local
-    return load_encrypted_ads_snapshot_with_keys(
+    published = load_encrypted_ads_snapshot_with_keys(
         PUBLISHED_ADS_SNAPSHOT_PATH,
         dashboard_data_keys(),
     )
+    return newest_ads_snapshot(local, published)
 
 
 def secret_value(name: str) -> str:
@@ -1676,7 +1676,7 @@ elif page.startswith("03"):
     cols = st.columns(4)
     cols[0].metric(
         "Total Ad spend", money(ads["spend"]),
-        f"{tacos:.1%} TACOS" if pd.notna(tacos) else "TACOS N/A",
+        f"{tacos:.2%} TACOS" if pd.notna(tacos) else "TACOS N/A",
     )
     sales_share = ads["sales"] / data["revenue"] if data["revenue"] else pd.NA
     cols[1].metric(
@@ -1684,7 +1684,7 @@ elif page.startswith("03"):
         f"{sales_share:.1%} total revenue" if pd.notna(sales_share) else "N/A",
     )
     cols[2].metric(
-        "ACOS", f"{acos:.1%}" if pd.notna(acos) else "N/A",
+        "ACOS", f"{acos:.2%}" if pd.notna(acos) else "N/A",
         f"ROAS {roas:.2f}" if pd.notna(roas) else "ROAS N/A",
     )
     cols[3].metric(
@@ -1709,20 +1709,24 @@ elif page.startswith("03"):
             )
             fulfillment_cols[2].metric(
                 f"{fulfillment_type} ACOS",
-                f'{float(row["ACOS"]):.1%}' if pd.notna(row["ACOS"]) else "N/A",
+                f'{float(row["ACOS"]):.2%}' if pd.notna(row["ACOS"]) else "N/A",
             )
             fulfillment_cols[3].metric(
                 f"{fulfillment_type} Ads Orders", f'{int(row["Ads_Orders"]):,}'
             )
+        ads_by_fulfillment_display = ads_by_fulfillment.copy()
+        ads_by_fulfillment_display["ACOS"] = (
+            pd.to_numeric(ads_by_fulfillment_display["ACOS"], errors="coerce") * 100
+        )
         st.dataframe(
-            ads_by_fulfillment,
+            ads_by_fulfillment_display,
             hide_index=True,
             width="stretch",
             column_config={
                 "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
                 "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
                 "Ads_Orders": st.column_config.NumberColumn(format="%d"),
-                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+                "ACOS": st.column_config.NumberColumn(format="%.2f%%"),
             },
         )
         st.markdown(
@@ -1733,8 +1737,12 @@ elif page.startswith("03"):
             'Các số liệu này không tính vào Team KPI FBM.</div></div>',
             unsafe_allow_html=True,
         )
+        ads_fba_by_employee_display = ads_fba_by_employee.copy()
+        ads_fba_by_employee_display["ACOS"] = (
+            pd.to_numeric(ads_fba_by_employee_display["ACOS"], errors="coerce") * 100
+        )
         st.dataframe(
-            ads_fba_by_employee,
+            ads_fba_by_employee_display,
             hide_index=True,
             width="stretch",
             column_config={
@@ -1742,7 +1750,7 @@ elif page.startswith("03"):
                 "Ads_Spend": st.column_config.NumberColumn(format="$%.2f"),
                 "Ads_Sales": st.column_config.NumberColumn(format="$%.2f"),
                 "Ads_Orders": st.column_config.NumberColumn(format="%d"),
-                "ACOS": st.column_config.NumberColumn(format="%.1%%"),
+                "ACOS": st.column_config.NumberColumn(format="%.2f%%"),
             },
         )
     funnel = pd.DataFrame(
@@ -2268,7 +2276,11 @@ else:
                                         lambda value: (
                                             "N/A"
                                             if pd.isna(value)
-                                            else f"{float(value):.1%}"
+                                            else (
+                                                f"{float(value):.2%}"
+                                                if rate_column in {"ACOS", "TACOS"}
+                                                else f"{float(value):.1%}"
+                                            )
                                         )
                                     )
                             st.dataframe(
@@ -2299,7 +2311,7 @@ else:
                                     fba_display["Ads_Orders"].fillna(0).round().astype(int)
                                 )
                                 fba_display["ACOS"] = fba_display["ACOS"].map(
-                                    lambda value: "N/A" if pd.isna(value) else f"{float(value):.1%}"
+                                    lambda value: "N/A" if pd.isna(value) else f"{float(value):.2%}"
                                 )
                                 st.dataframe(
                                     fba_display,

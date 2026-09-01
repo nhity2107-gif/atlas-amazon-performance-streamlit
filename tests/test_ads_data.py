@@ -15,6 +15,7 @@ from ads_data import (
     load_ads_snapshot,
     load_encrypted_ads_snapshot,
     load_encrypted_ads_snapshot_with_keys,
+    newest_ads_snapshot,
     save_ads_snapshot,
     save_encrypted_ads_snapshot,
     select_ads_summary,
@@ -22,6 +23,15 @@ from ads_data import (
 
 
 class AdsDataTests(unittest.TestCase):
+    def test_newest_ads_snapshot_does_not_blindly_prefer_stale_local_state(self) -> None:
+        local = {"updated_at": "2026-08-31T23:00:00+00:00"}
+        published = {"updated_at": "2026-09-01T07:28:19+00:00"}
+
+        self.assertIs(newest_ads_snapshot(local, published), published)
+        self.assertIs(newest_ads_snapshot(published, local), published)
+        self.assertIs(newest_ads_snapshot(None, local), local)
+        self.assertIsNone(newest_ads_snapshot(None, None))
+
     def test_encrypted_ads_snapshot_round_trip_and_wrong_key_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

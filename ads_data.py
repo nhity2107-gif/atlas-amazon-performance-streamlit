@@ -694,6 +694,29 @@ def load_encrypted_ads_snapshot_with_keys(
     return None
 
 
+def newest_ads_snapshot(
+    *snapshots: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Choose the freshest valid Ads snapshot across local and published state.
+
+    A machine can retain an older local snapshot after another machine publishes
+    a newer encrypted snapshot.  Blindly preferring local state then makes a
+    valid month look missing in the dashboard.  ``updated_at`` is written for
+    both snapshot formats, so it is the canonical freshness signal.
+    """
+    valid = [snapshot for snapshot in snapshots if snapshot is not None]
+    if not valid:
+        return None
+
+    def freshness(snapshot: dict[str, Any]) -> pd.Timestamp:
+        updated = pd.to_datetime(
+            snapshot.get("updated_at", ""), errors="coerce", utc=True
+        )
+        return updated if pd.notna(updated) else pd.Timestamp.min.tz_localize("UTC")
+
+    return max(valid, key=freshness)
+
+
 def select_ads_summary(
     snapshot: dict[str, Any] | None,
     month: str,

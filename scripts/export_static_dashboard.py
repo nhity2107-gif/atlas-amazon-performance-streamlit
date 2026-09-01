@@ -463,7 +463,7 @@ def export(month: str, output: Path) -> None:
     ads_display.loc[ads_display["Nhân sự"].eq("Nhi-Support"), "TACOS"] = pd.NA
     total_spend = float(ads_display["Ads_Spend"].sum())
     total_sales = float(ads_display["Ads_Sales"].sum())
-    weighted_acos = f"{total_spend / total_sales:.1%}" if total_sales else "N/A"
+    weighted_acos = f"{total_spend / total_sales:.2%}" if total_sales else "N/A"
     ads_display = ads_display.sort_values(
         ["Ads_Spend", "Ads_Sales"], ascending=False, kind="stable"
     )
@@ -471,10 +471,10 @@ def export(month: str, output: Path) -> None:
     ads_display["Ads_Sales"] = ads_display["Ads_Sales"].map(format_money)
     ads_display["Portfolio_Revenue"] = ads_display["Portfolio_Revenue"].map(format_money)
     ads_display["ACOS"] = ads_display["ACOS"].map(
-        lambda value: f"{float(value):.1%}" if pd.notna(value) and float(value) else "N/A"
+        lambda value: f"{float(value):.2%}" if pd.notna(value) and float(value) else "N/A"
     )
     ads_display["TACOS"] = ads_display["TACOS"].map(
-        lambda value: f"{float(value):.1%}" if pd.notna(value) else "N/A"
+        lambda value: f"{float(value):.2%}" if pd.notna(value) else "N/A"
     )
     idea_summary["Validated_Rate"] = idea_summary["Validated_Rate"].map(
         lambda value: f"{float(value):.1%}" if pd.notna(value) else "N/A"
