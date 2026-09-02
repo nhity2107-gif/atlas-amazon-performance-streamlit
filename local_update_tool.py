@@ -358,6 +358,8 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
             order_snapshot_result = export_snapshot(
                 DATABASE,
                 ORDER_SNAPSHOT,
+                period_start=f"{month}-01",
+                period_end=as_of.isoformat(),
                 as_of_date=as_of.isoformat(),
             )
             if include_ads:

@@ -36,7 +36,12 @@ if ($Report) {
     if ($LASTEXITCODE -ne 0) { throw "Không thể ingest order report." }
 }
 
-python $pipeline export-snapshot --db $database --output $dashboardSnapshot --as-of-date $AsOfDate
+python $pipeline export-snapshot `
+    --db $database `
+    --output $dashboardSnapshot `
+    --start $Start `
+    --end $End `
+    --as-of-date $End
 if ($LASTEXITCODE -ne 0) { throw "Không thể sinh snapshot dashboard." }
 
 if ($Publish) {
