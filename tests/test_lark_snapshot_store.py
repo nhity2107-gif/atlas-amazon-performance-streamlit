@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 
 from lark_snapshot_store import (
     load_encrypted_lark_snapshot,
+    load_encrypted_lark_snapshot_with_keys,
     load_lark_snapshot,
     newest_lark_snapshot,
     save_encrypted_lark_snapshot,
@@ -121,6 +122,24 @@ class LarkSnapshotStoreTests(unittest.TestCase):
         self.assertEqual(restored["total"].loc[0, "listing_lead_time"], 4.25)
         self.assertTrue(restored["total"].loc[0, "ads_launched"])
         self.assertIsNone(rejected)
+
+    def test_encrypted_snapshot_accepts_legacy_key_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "plain"
+            encrypted = Path(temp_dir) / "published.enc"
+            save_lark_snapshot(root, self.sample_payload())
+            active_key = Fernet.generate_key().decode("utf-8")
+            wrong_key = Fernet.generate_key().decode("utf-8")
+            save_encrypted_lark_snapshot(root, encrypted, active_key)
+
+            restored = load_encrypted_lark_snapshot_with_keys(
+                encrypted,
+                (wrong_key, active_key),
+            )
+
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored["record_counts"]["TOTAL ASIN"], 1)
 
     def test_newest_snapshot_beats_stale_local_snapshot(self) -> None:
         local = {"snapshot_updated_at": "2026-08-12T00:51:00+00:00"}
