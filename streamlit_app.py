@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 from pathlib import Path
 
@@ -53,7 +54,9 @@ _lark_snapshot_store = importlib.reload(
     importlib.import_module("lark_snapshot_store")
 )
 LARK_SNAPSHOT_SCHEMA_VERSION = _lark_snapshot_store.SCHEMA_VERSION
-load_encrypted_lark_snapshot = _lark_snapshot_store.load_encrypted_lark_snapshot
+load_encrypted_lark_snapshot_with_keys = (
+    _lark_snapshot_store.load_encrypted_lark_snapshot_with_keys
+)
 load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
 newest_lark_snapshot = _lark_snapshot_store.newest_lark_snapshot
 save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
@@ -527,6 +530,20 @@ def dashboard_data_keys() -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
+def file_content_version(path: Path) -> str:
+    """Return a cache key that changes whenever a published artifact changes."""
+    if not path.exists():
+        return ""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
 def lark_config() -> tuple[LarkConfig | None, list[str]]:
     names = [
         "LARK_APP_ID",
@@ -561,12 +578,15 @@ def persisted_lark_frames(snapshot_version: int, schema_version: str) -> dict | 
 
 @st.cache_data(show_spinner=False)
 def published_lark_frames(
-    snapshot_version: int,
+    snapshot_version: str,
     schema_version: str,
-    publish_key: str,
+    publish_keys: tuple[str, ...],
 ) -> dict | None:
     del snapshot_version, schema_version
-    return load_encrypted_lark_snapshot(PUBLISHED_LARK_SNAPSHOT_PATH, publish_key)
+    return load_encrypted_lark_snapshot_with_keys(
+        PUBLISHED_LARK_SNAPSHOT_PATH,
+        publish_keys,
+    )
 
 
 def saved_lark_frames() -> dict | None:
@@ -575,15 +595,11 @@ def saved_lark_frames() -> dict | None:
         lark_snapshot_version(PERSISTED_LARK_SNAPSHOT_DIR),
         LARK_SNAPSHOT_SCHEMA_VERSION,
     )
-    published_version = (
-        PUBLISHED_LARK_SNAPSHOT_PATH.stat().st_mtime_ns
-        if PUBLISHED_LARK_SNAPSHOT_PATH.exists()
-        else 0
-    )
+    published_version = file_content_version(PUBLISHED_LARK_SNAPSHOT_PATH)
     published_saved = published_lark_frames(
         published_version,
         LARK_SNAPSHOT_SCHEMA_VERSION,
-        dashboard_data_key(),
+        dashboard_data_keys(),
     )
     return newest_lark_snapshot(local_saved, published_saved)
 

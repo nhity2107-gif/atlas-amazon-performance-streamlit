@@ -214,3 +214,15 @@ def load_encrypted_lark_snapshot(
         return _restore_frames(frames, metadata)
     except (ValueError, KeyError, pd.errors.ParserError, LarkSnapshotError):
         return None
+
+
+def load_encrypted_lark_snapshot_with_keys(
+    path: Path,
+    keys: tuple[str, ...] | list[str],
+) -> dict[str, Any] | None:
+    """Load with the current or legacy key during a key-name migration."""
+    for key in dict.fromkeys(str(value).strip() for value in keys if str(value).strip()):
+        snapshot = load_encrypted_lark_snapshot(path, key)
+        if snapshot is not None:
+            return snapshot
+    return None
