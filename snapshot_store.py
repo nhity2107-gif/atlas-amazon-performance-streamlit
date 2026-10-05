@@ -16,8 +16,9 @@ SNAPSHOT_COLUMNS = [
     "Orders",
     "Units",
     "record_id_hint",
+    "sku_code",
 ]
-SNAPSHOT_SCHEMA_VERSION = "order-snapshot-v3"
+SNAPSHOT_SCHEMA_VERSION = "order-snapshot-v4"
 
 
 class SnapshotError(RuntimeError):
@@ -29,11 +30,14 @@ def empty_snapshot() -> pd.DataFrame:
 
 
 def normalize_snapshot(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    if "sku_code" not in frame:
+        frame["sku_code"] = ""
     missing = [column for column in SNAPSHOT_COLUMNS if column not in frame]
     if missing:
         raise SnapshotError("Snapshot thiếu cột: " + ", ".join(missing))
     normalized = frame.reindex(columns=SNAPSHOT_COLUMNS).copy()
-    for column in ("Store", "Date", "ASIN", "record_id_hint"):
+    for column in ("Store", "Date", "ASIN", "record_id_hint", "sku_code"):
         normalized[column] = normalized[column].fillna("").astype(str)
     for column in ("Revenue", "Orders", "Units"):
         normalized[column] = pd.to_numeric(normalized[column], errors="coerce").fillna(0)
@@ -46,7 +50,7 @@ def load_snapshot(path: Path) -> pd.DataFrame:
     try:
         frame = pd.read_csv(
             path,
-            dtype={"Store": str, "Date": str, "ASIN": str, "record_id_hint": str},
+            dtype={"Store": str, "Date": str, "ASIN": str, "record_id_hint": str, "sku_code": str},
         )
     except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
         raise SnapshotError("Không thể đọc snapshot Order.") from exc

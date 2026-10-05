@@ -31,6 +31,23 @@ COLUMNS = [
 
 
 class LocalPipelineTests(unittest.TestCase):
+    def test_export_preserves_distinct_sku_codes_for_same_asin(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            report = root / "orders.txt"
+            database = root / "atlas.db"
+            snapshot = root / "snapshot.csv"
+            self.write_report(report, [
+                ["o1", "i1", "2026-10-01T08:00:00Z", "Shipped", "MFN", "USD", "A1", "D108-01-recA", 1, 10, 2],
+                ["o2", "i2", "2026-10-01T09:00:00Z", "Shipped", "MFN", "USD", "A1", "D19-01-recB", 2, 20, 0],
+            ])
+            ingest_order_report(database, report, "Wrappiness", "daily")
+            export_snapshot(database, snapshot)
+            result = load_snapshot(snapshot).set_index("sku_code")
+            self.assertEqual(set(result.index), {"D108", "D19"})
+            self.assertEqual(result.loc["D108", "Revenue"], 12)
+            self.assertEqual(result.loc["D19", "Units"], 2)
+
     def write_report(self, path: Path, rows: list[list[object]]) -> None:
         pd.DataFrame(rows, columns=COLUMNS).to_csv(path, sep="\t", index=False)
 

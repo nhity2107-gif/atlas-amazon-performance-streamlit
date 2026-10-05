@@ -10,10 +10,43 @@ from product_data import (
     records_from_order_hints,
     revenue_milestone_counts,
     top_record_id_frame,
+    top_sku_code_frame,
+    sku_code_from_sku,
 )
 
 
 class ProductDataTests(unittest.TestCase):
+    def test_sku_code_extracts_prefix_without_truncating_longer_codes(self) -> None:
+        self.assertEqual(sku_code_from_sku("D108-01-recABC"), "D108")
+        self.assertEqual(sku_code_from_sku(" d19-00-recABC "), "D19")
+        self.assertEqual(sku_code_from_sku("123-variant"), "123")
+        for sku in (None, "", "TS-01", "D1089-01", "recABC-D108"):
+            self.assertEqual(sku_code_from_sku(sku), "")
+
+    def test_sku_code_totals_cross_records_and_asins_without_duplicate_mapping(self) -> None:
+        orders = pd.DataFrame([
+            {"sku_code": "D108", "ASIN": "A1", "Revenue": 100, "Orders": 2, "Units": 3},
+            {"sku_code": "D108", "ASIN": "A2", "Revenue": 50, "Orders": 1, "Units": 1},
+            {"sku_code": "D108", "ASIN": "A1", "Revenue": 20, "Orders": 1, "Units": 1},
+            {"sku_code": "D19", "ASIN": "A3", "Revenue": 80, "Orders": 1, "Units": 1},
+            {"sku_code": "W01", "ASIN": "A4", "Revenue": 0, "Orders": 1, "Units": 1},
+            {"sku_code": "", "ASIN": "A5", "Revenue": 50, "Orders": 1, "Units": 1},
+        ])
+        mapping = pd.DataFrame([
+            {"asin": "A1", "record_id": "rec1", "managed_by": "Alice"},
+            {"asin": "A1", "record_id": "rec1", "managed_by": "Alice"},
+            {"asin": "A2", "record_id": "rec2", "managed_by": "Bob"},
+        ])
+        result = top_sku_code_frame(orders, 300, mapping)
+        self.assertEqual(result["SKU CODE"].tolist(), ["D108", "D19"])
+        row = result.iloc[0]
+        self.assertEqual(row["Revenue"], 170)
+        self.assertEqual(row["Orders"], 4)
+        self.assertEqual(row["Units"], 5)
+        self.assertEqual(row["ASIN count"], 2)
+        self.assertEqual(row["Managed By"], "Alice, Bob")
+        self.assertAlmostEqual(row["Share"], 170 / 300 * 100)
+
     def test_revenue_milestones_count_unique_owned_record_ids(self) -> None:
         records = pd.DataFrame([
             {"record_id": "rec1", "owner": "Alice", "Revenue": 700},

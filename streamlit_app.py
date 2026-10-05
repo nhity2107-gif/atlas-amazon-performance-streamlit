@@ -14,13 +14,16 @@ import ads_data as _ads_data
 from fulfillment_rules import apply_fulfillment_overrides
 from lark_data import LarkConfig, fetch_image_data_urls, fetch_lark_frames, probe_image_download
 import lark_snapshot_store as _lark_snapshot_store
+importlib.reload(importlib.import_module("product_data"))
 from product_data import (
     fulfillment_revenue_frame,
     records_from_order_hints,
     revenue_milestone_counts,
     top_record_id_frame,
+    top_sku_code_frame,
 )
 from reporting_period import HALF_YEAR_PERIODS, period_bounds, period_label, period_months
+importlib.reload(importlib.import_module("snapshot_store"))
 from snapshot_store import (
     SnapshotError,
     empty_snapshot,
@@ -437,7 +440,7 @@ def selected_order_performance(
         if PERSISTED_SNAPSHOT_PATH.exists()
         else 0
     )
-    persisted = persisted_order_performance(snapshot_version, 2)
+    persisted = persisted_order_performance(snapshot_version, 4)
     selected = persisted[persisted["Store"].isin(stores)].copy()
     if month and not selected.empty:
         dates = pd.to_datetime(selected["Date"], errors="coerce")
@@ -637,26 +640,32 @@ def render_top_record_table(
     records: pd.DataFrame,
     total_revenue: float,
     config: LarkConfig | None,
+    *,
+    id_column: str = "Record ID",
+    total_asins: pd.DataFrame | None = None,
 ) -> None:
-    products = top_record_id_frame(records, total_revenue)
+    products = (
+        top_sku_code_frame(records, total_revenue, total_asins)
+        if id_column == "SKU CODE" else top_record_id_frame(records, total_revenue)
+    )
     if products.empty:
-        st.warning("Chưa tìm thấy Record ID có sale trong phạm vi đã chọn.")
+        st.warning(f"Chưa tìm thấy {id_column} có sale trong phạm vi đã chọn.")
         return
 
     filter_columns = st.columns(3)
     selected_idea_by = filter_columns[0].multiselect(
         "Idea By",
-        sorted(value for value in products["Idea By"].dropna().unique() if value),
+        sorted({owner.strip() for value in products["Idea By"].dropna() for owner in value.split(",") if owner.strip()}),
         key="product_idea_by_filter",
     )
     selected_managed_by = filter_columns[1].multiselect(
         "Managed By",
-        sorted(value for value in products["Managed By"].dropna().unique() if value),
+        sorted({owner.strip() for value in products["Managed By"].dropna() for owner in value.split(",") if owner.strip()}),
         key="product_managed_by_filter",
     )
     selected_ads_by = filter_columns[2].multiselect(
         "Ads By",
-        sorted(value for value in products["Ads By"].dropna().unique() if value),
+        sorted({owner.strip() for value in products["Ads By"].dropna() for owner in value.split(",") if owner.strip()}),
         key="product_ads_by_filter",
     )
     for column, selected_values in (
@@ -665,12 +674,14 @@ def render_top_record_table(
         ("Ads By", selected_ads_by),
     ):
         if selected_values:
-            products = products[products[column].isin(selected_values)].copy()
+            products = products[products[column].map(
+                lambda value: bool(set(value.split(", ")) & set(selected_values))
+            )].copy()
     products = products.reset_index(drop=True)
     products["#"] = range(1, len(products) + 1)
-    st.caption(f"Đang hiển thị {len(products):,} Record ID có sale · Revenue giảm dần.")
+    st.caption(f"Đang hiển thị {len(products):,} {id_column} có sale · Revenue giảm dần.")
     if products.empty:
-        st.info("Không có Record ID phù hợp với các bộ lọc nhân sự.")
+        st.info(f"Không có {id_column} phù hợp với các bộ lọc nhân sự.")
         return
 
     image_data_urls: dict[str, str] = {}
@@ -703,7 +714,7 @@ def render_top_record_table(
         [
             "#",
             "Image",
-            "Record ID",
+            id_column,
             "Product",
             "Idea By",
             "Managed By",
@@ -732,7 +743,7 @@ def render_top_record_table(
         row_height=product_row_height,
         column_config={
             "Image": st.column_config.ImageColumn(width="small"),
-            "Record ID": st.column_config.TextColumn(width="medium"),
+            id_column: st.column_config.TextColumn(width="medium"),
             "Product": st.column_config.TextColumn(width="large"),
             "Idea By": st.column_config.TextColumn(width="medium"),
             "Managed By": st.column_config.TextColumn(width="medium"),
@@ -1516,11 +1527,21 @@ if page.startswith("01"):
         st.markdown("</div>", unsafe_allow_html=True)
 
 elif page.startswith("02"):
-    st.markdown('<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div><h3>Sản phẩm có sale theo Record ID</h3></div>', unsafe_allow_html=True)
+    product_grouping = st.radio(
+        "Gộp sản phẩm theo", ["Record ID", "SKU CODE"], horizontal=True,
+        key="product_grouping",
+    )
+    st.markdown(
+        '<div class="atlas-card"><div class="atlas-eyebrow">PRODUCT PERFORMANCE</div>'
+        f'<h3>Sản phẩm có sale theo {product_grouping}</h3></div>',
+        unsafe_allow_html=True,
+    )
     st.caption(
-        "Dữ liệu Order được nạp tự động từ snapshot đã lưu và gộp toàn bộ ASIN "
-        "cùng sản phẩm theo Record ID từ Lark. "
-        "Danh sách gồm tất cả Record ID có Revenue > 0 và được xếp Revenue giảm dần. "
+        ("Dữ liệu Order được gộp theo SKU CODE — mã 3–4 ký tự đầu SKU, ví dụ D19, D108. "
+         if product_grouping == "SKU CODE" else
+         "Dữ liệu Order được nạp tự động từ snapshot đã lưu và gộp toàn bộ ASIN "
+         "cùng sản phẩm theo Record ID từ Lark. ")
+        + f"Danh sách gồm tất cả {product_grouping} có Revenue > 0, xếp Revenue giảm dần. "
         "Share được tính trên tổng Revenue của store và thời gian đang chọn."
     )
     config, missing_secrets = lark_config()
@@ -1593,7 +1614,22 @@ elif page.startswith("02"):
                     f"{product_end_date:%d/%m/%Y}."
                 )
     if not product_performance.empty:
-        if missing_secrets:
+        if product_grouping == "SKU CODE":
+            missing_code = product_performance.get(
+                "sku_code", pd.Series("", index=product_performance.index)
+            ).fillna("").eq("")
+            if missing_code.any():
+                st.warning(
+                    f"{int(missing_code.sum()):,} dòng Order chưa có SKU CODE "
+                    f"(${product_performance.loc[missing_code, 'Revenue'].sum():,.2f}); "
+                    "các dòng này chưa được đưa vào bảng. Cập nhật snapshot từ Order report để bổ sung."
+                )
+            render_top_record_table(
+                product_performance, float(product_performance["Revenue"].sum()),
+                config if not missing_secrets else None,
+                id_column="SKU CODE", total_asins=lark["total"] if lark is not None else None,
+            )
+        elif missing_secrets:
             st.warning(
                 "Chưa kết nối Lark nên dashboard đang gộp theo Record ID lấy từ SKU. "
                 "Các cột Idea By, Managed By, Custom By và Ads By được để trống "
