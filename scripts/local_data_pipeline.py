@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from snapshot_store import SNAPSHOT_COLUMNS, save_snapshot, upsert_snapshot_period
+from product_data import sku_code_from_sku
 
 
 ORDER_COLUMNS = {
@@ -295,7 +296,7 @@ def export_snapshot(
         params = (period_start, period_end) if date_clause else ()
         items = pd.read_sql_query(
             f"""
-            SELECT store, purchase_date_pacific, asin, record_id_hint,
+            SELECT store, purchase_date_pacific, asin, sku, record_id_hint,
                    revenue, amazon_order_id, quantity, imported_at
             FROM order_items
             WHERE lower(order_status) <> 'cancelled'
@@ -310,8 +311,9 @@ def export_snapshot(
     if items.empty:
         raise ValueError("Database chưa có order hợp lệ trong kỳ xuất snapshot.")
     source_updated_at = str(items["imported_at"].max())
+    items["sku_code"] = items["sku"].map(sku_code_from_sku)
     summary = (
-        items.groupby(["store", "purchase_date_pacific", "asin"], as_index=False)
+        items.groupby(["store", "purchase_date_pacific", "asin", "sku_code"], as_index=False)
         .agg(
             Revenue=("revenue", "sum"),
             Orders=("amazon_order_id", "nunique"),

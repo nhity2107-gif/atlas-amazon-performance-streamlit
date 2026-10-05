@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from fulfillment_rules import apply_fulfillment_overrides
@@ -31,6 +33,55 @@ def first_nonempty(series: pd.Series) -> str:
         if pd.notna(value) and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def sku_code_from_sku(value: object) -> str:
+    """Extract the leading 3–4 character product code (e.g. D19, D108)."""
+    if pd.isna(value):
+        return ""
+    match = re.match(r"^([A-Z0-9]{3,4})(?=[^A-Z0-9]|$)", str(value).strip().upper())
+    return match.group(1) if match else ""
+
+
+def top_sku_code_frame(
+    performance: pd.DataFrame,
+    total_revenue: float,
+    total_asins: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Rank actual Order rows by SKU code without multiplying Lark matches."""
+    if performance.empty:
+        return top_record_id_frame(pd.DataFrame(), total_revenue).rename(
+            columns={"Record ID": "SKU CODE"}
+        )
+    frame = performance.copy()
+    if "sku_code" not in frame:
+        frame["sku_code"] = frame.get("sku", pd.Series("", index=frame.index)).map(sku_code_from_sku)
+    frame["sku_code"] = frame["sku_code"].fillna("").map(sku_code_from_sku)
+    frame = frame[frame["sku_code"].ne("")].copy()
+    for column in RECORD_METADATA_COLUMNS:
+        frame[column] = ""
+    if total_asins is not None and not total_asins.empty:
+        total = total_asins.copy()
+        for column in RECORD_METADATA_COLUMNS:
+            if column not in total:
+                total[column] = ""
+        for key, order_key in (("asin", "ASIN"), ("record_id", "record_id_hint")):
+            if key not in total or order_key not in frame:
+                continue
+            lookup = total[total[key].fillna("").ne("")].groupby(key)[RECORD_METADATA_COLUMNS].agg(first_nonempty)
+            for column in RECORD_METADATA_COLUMNS:
+                values = frame[order_key].map(lookup[column]).fillna("")
+                frame[column] = frame[column].where(frame[column].ne(""), values)
+    def unique_values(values: pd.Series) -> str:
+        return ", ".join(sorted({str(value).strip() for value in values if pd.notna(value) and str(value).strip()}))
+    for column in ("Revenue", "Orders", "Units"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+    grouped = frame.groupby("sku_code", as_index=False).agg(
+        **{column: (column, unique_values if column.endswith("_by") else first_nonempty) for column in RECORD_METADATA_COLUMNS},
+        Revenue=("Revenue", "sum"), Orders=("Orders", "sum"), Units=("Units", "sum"),
+        asin_count=("ASIN", "nunique"),
+    ).rename(columns={"sku_code": "record_id"})
+    return top_record_id_frame(grouped, total_revenue).rename(columns={"Record ID": "SKU CODE"})
 
 
 def revenue_milestone_counts(

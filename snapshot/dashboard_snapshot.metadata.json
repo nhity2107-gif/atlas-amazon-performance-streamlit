@@ -1,5 +1,5 @@
 {
-  "schema_version": "order-snapshot-v3",
+  "schema_version": "order-snapshot-v4",
   "updated_at": "2026-10-05T03:51:17.227959+00:00",
   "source_updated_at": "2026-10-05T03:51:17.117775+00:00",
   "report_as_of_date": "2026-10-04",
