@@ -1272,7 +1272,7 @@ with st.sidebar:
         month_options,
         format_func=period_label,
     )
-    st.markdown("**Live month-to-date**")
+    st.markdown("**Live reporting period**")
     st.caption("Order + Ads snapshot đã xử lý")
     st.caption("Pacific Time · Cancelled excluded\n\nFBA / FBM separated")
 
