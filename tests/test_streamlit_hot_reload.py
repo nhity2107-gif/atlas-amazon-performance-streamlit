@@ -13,6 +13,15 @@ import team_kpi
 
 
 class StreamlitHotReloadTests(unittest.TestCase):
+    def test_local_update_tool_reloads_pipeline_and_guards_month_history(self) -> None:
+        tool_path = Path(__file__).resolve().parents[1] / "local_update_tool.py"
+        source = tool_path.read_text(encoding="utf-8")
+
+        self.assertIn("import scripts.local_data_pipeline as _local_data_pipeline", source)
+        self.assertIn("importlib.reload(_local_data_pipeline)", source)
+        self.assertIn("missing_snapshot_months", source)
+        self.assertIn("Đã chặn publish", source)
+
     def test_team_kpi_has_no_password_gate(self) -> None:
         app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
         source = app_path.read_text(encoding="utf-8")

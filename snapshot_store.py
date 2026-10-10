@@ -78,6 +78,33 @@ def load_snapshot_metadata(path: Path) -> dict[str, Any]:
         raise SnapshotError("Không thể đọc metadata snapshot Order.") from exc
 
 
+def snapshot_months(path: Path) -> list[str]:
+    frame = load_snapshot(path)
+    dates = pd.to_datetime(frame["Date"], errors="coerce")
+    return sorted(dates.dt.strftime("%Y-%m").dropna().unique())
+
+
+def capture_snapshot(path: Path) -> dict[Path, bytes | None]:
+    targets = (path, metadata_path(path))
+    return {
+        target: target.read_bytes() if target.exists() else None
+        for target in targets
+    }
+
+
+def restore_snapshot(backup: dict[Path, bytes | None]) -> None:
+    for target, content in backup.items():
+        if content is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+
+def missing_snapshot_months(expected: list[str], actual: list[str]) -> list[str]:
+    return sorted(set(expected).difference(actual))
+
+
 def save_snapshot(
     path: Path,
     frame: pd.DataFrame,

@@ -13,7 +13,8 @@ import streamlit as st
 import ads_data as _ads_data
 from lark_data import LarkConfig, fetch_lark_frames
 import lark_snapshot_store as _lark_snapshot_store
-from scripts.local_data_pipeline import export_snapshot, ingest_order_report, prepare_order_rows
+import snapshot_store as _snapshot_store
+import scripts.local_data_pipeline as _local_data_pipeline
 from scripts.git_publish import push_with_remote_sync
 import target_data as _target_data
 
@@ -30,6 +31,11 @@ _lark_snapshot_store = importlib.reload(_lark_snapshot_store)
 load_lark_snapshot = _lark_snapshot_store.load_lark_snapshot
 save_encrypted_lark_snapshot = _lark_snapshot_store.save_encrypted_lark_snapshot
 save_lark_snapshot = _lark_snapshot_store.save_lark_snapshot
+_snapshot_store = importlib.reload(_snapshot_store)
+_local_data_pipeline = importlib.reload(_local_data_pipeline)
+export_snapshot = _local_data_pipeline.export_snapshot
+ingest_order_report = _local_data_pipeline.ingest_order_report
+prepare_order_rows = _local_data_pipeline.prepare_order_rows
 _target_data = importlib.reload(_target_data)
 read_fbm_target_workbook = _target_data.read_fbm_target_workbook
 save_fbm_target_snapshot = _target_data.save_fbm_target_snapshot
@@ -55,6 +61,18 @@ ADS_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "ads"
 PUBLISHED_ADS = DASHBOARD_ROOT / "snapshot" / "published_ads_snapshot.enc"
 PUBLISHED_LARK = DASHBOARD_ROOT / "snapshot" / "published_lark_snapshot.enc"
 FBM_TARGET_SNAPSHOT = DASHBOARD_ROOT / "snapshot" / "fbm_target.csv"
+
+
+def order_snapshot_months(path: Path) -> list[str]:
+    return _snapshot_store.snapshot_months(path)
+
+
+def capture_order_snapshot(path: Path) -> dict[Path, bytes | None]:
+    return _snapshot_store.capture_snapshot(path)
+
+
+def restore_order_snapshot(backup: dict[Path, bytes | None]) -> None:
+    _snapshot_store.restore_snapshot(backup)
 
 
 def save_upload(upload, path: Path) -> Path:
@@ -277,11 +295,14 @@ if include_ads:
     )
 
 if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container_width=True):
+    st.session_state.pop("last_build", None)
     missing = [name for name, upload in required_uploads.items() if upload is None]
     if missing:
         st.error("Còn thiếu: " + ", ".join(missing))
     else:
         try:
+            order_snapshot_backup = capture_order_snapshot(ORDER_SNAPSHOT)
+            order_months_before = order_snapshot_months(ORDER_SNAPSHOT)
             raw_root = ATLAS_ROOT / "daily-reports" / month / as_of.isoformat()
             files = {
                 "wr_order": save_upload(
@@ -362,6 +383,17 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 period_end=as_of.isoformat(),
                 as_of_date=as_of.isoformat(),
             )
+            order_months_after = order_snapshot_months(ORDER_SNAPSHOT)
+            missing_order_months = _snapshot_store.missing_snapshot_months(
+                order_months_before, order_months_after
+            )
+            if missing_order_months:
+                restore_order_snapshot(order_snapshot_backup)
+                raise ValueError(
+                    "Đã chặn build vì snapshot làm mất tháng lịch sử: "
+                    + ", ".join(missing_order_months)
+                    + ". Snapshot trước build đã được phục hồi."
+                )
             if include_ads:
                 common_metadata = {
                     "month": month,
@@ -388,6 +420,9 @@ if st.button("1 · Kiểm tra và sinh dashboard", type="primary", use_container
                 "order_checks": order_checks,
                 "order_results": order_results,
                 "order_snapshot": order_snapshot_result,
+                "required_order_months": sorted(
+                    set(order_months_before).union(order_months_after)
+                ),
                 "lark_status": lark_status,
                 "lark_refreshed": lark_refreshed,
                 "ads_updated": include_ads,
@@ -467,6 +502,15 @@ if "last_build" in st.session_state:
         ),
     ):
         try:
+            current_order_months = order_snapshot_months(ORDER_SNAPSHOT)
+            missing_order_months = _snapshot_store.missing_snapshot_months(
+                build.get("required_order_months", []), current_order_months
+            )
+            if missing_order_months:
+                raise ValueError(
+                    "Đã chặn publish vì snapshot đang thiếu tháng lịch sử: "
+                    + ", ".join(missing_order_months)
+                )
             publish_key = shared_publish_key
             save_encrypted_lark_snapshot(LARK_SNAPSHOT, PUBLISHED_LARK, publish_key)
             if build["ads_updated"]:
