@@ -22,7 +22,7 @@ from product_data import (
     top_record_id_frame,
     top_sku_code_frame,
 )
-from reporting_period import HALF_YEAR_PERIODS, period_bounds, period_label, period_months
+from reporting_period import REPORTING_PERIODS, period_bounds, period_label, period_months
 importlib.reload(importlib.import_module("snapshot_store"))
 from snapshot_store import (
     SnapshotError,
@@ -457,7 +457,7 @@ def available_order_months() -> list[str]:
     dates = pd.to_datetime(persisted["Date"], errors="coerce")
     months = sorted(dates.dt.strftime("%Y-%m").dropna().unique(), reverse=True)
     available = months or [REPORT_START.strftime("%Y-%m")]
-    for period, (start_month, end_month) in HALF_YEAR_PERIODS.items():
+    for period, (start_month, end_month) in REPORTING_PERIODS.items():
         if any(start_month <= month <= end_month for month in available):
             available.append(period)
     return available
@@ -1268,7 +1268,7 @@ with st.sidebar:
     st.divider()
     month_options = available_order_months()
     selected_month = st.selectbox(
-        "Tháng báo cáo",
+        "Kỳ báo cáo",
         month_options,
         format_func=period_label,
     )

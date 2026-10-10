@@ -49,6 +49,11 @@ class StreamlitHotReloadTests(unittest.TestCase):
             app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
             app = AppTest.from_file(str(app_path)).run(timeout=60)
             self.assertEqual([str(error.value) for error in app.exception], [])
+            period_selector = next(
+                selector for selector in app.selectbox if selector.label == "Kỳ báo cáo"
+            )
+            self.assertIn("Q3-2026", period_selector.options)
+            self.assertIn("Q4-2026", period_selector.options)
             self.assertTrue(hasattr(target_data, "daily_targets_for_month"))
             self.assertTrue(
                 hasattr(lark_snapshot_store, "load_encrypted_lark_snapshot")
