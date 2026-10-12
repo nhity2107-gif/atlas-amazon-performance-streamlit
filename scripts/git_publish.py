@@ -1,11 +1,53 @@
 from __future__ import annotations
 
+import csv
+from io import StringIO
 from pathlib import Path
 import subprocess
 
 
 class RemoteSyncError(RuntimeError):
     """Raised when publishing cannot safely synchronize with the remote branch."""
+
+
+ORDER_SNAPSHOT = "snapshot/dashboard_snapshot.csv"
+
+
+def order_months_from_csv(content: str) -> set[str]:
+    try:
+        rows = csv.DictReader(StringIO(content))
+        return {
+            value[:7]
+            for row in rows
+            if len(value := str(row.get("Date", "")).strip()) >= 7
+        }
+    except (csv.Error, TypeError):
+        return set()
+
+
+def ensure_remote_order_history_preserved(
+    repo: Path,
+    remote_ref: str,
+    publish_files: list[str],
+) -> None:
+    if ORDER_SNAPSHOT not in {Path(item).as_posix() for item in publish_files}:
+        return
+    local_path = repo / ORDER_SNAPSHOT
+    if not local_path.exists():
+        return
+    remote = run_git(
+        repo, "show", f"{remote_ref}:{ORDER_SNAPSHOT}", check=False
+    )
+    if remote.returncode != 0:
+        return
+    remote_months = order_months_from_csv(remote.stdout)
+    local_months = order_months_from_csv(local_path.read_text(encoding="utf-8"))
+    missing = sorted(remote_months.difference(local_months))
+    if missing:
+        raise RemoteSyncError(
+            "Đã chặn publish vì snapshot local thiếu tháng đang có trên remote: "
+            + ", ".join(missing)
+        )
 
 
 def run_git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -46,6 +88,7 @@ def sync_remote_preserving(
 
     run_git(repo, "fetch", remote, branch)
     remote_ref = f"{remote}/{branch}"
+    ensure_remote_order_history_preserved(repo, remote_ref, publish_files)
     ancestor = run_git(
         repo, "merge-base", "--is-ancestor", remote_ref, "HEAD", check=False
     )
@@ -104,4 +147,3 @@ def push_with_remote_sync(
             if attempt == 0 and is_non_fast_forward_error(error):
                 continue
             raise
-

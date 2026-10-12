@@ -12,7 +12,15 @@ from scripts.local_data_pipeline import (
     ingest_order_report,
     prepare_order_rows,
 )
-from snapshot_store import load_snapshot, load_snapshot_metadata
+from snapshot_store import (
+    capture_snapshot,
+    load_snapshot,
+    load_snapshot_metadata,
+    missing_snapshot_months,
+    restore_snapshot,
+    save_snapshot,
+    snapshot_months,
+)
 
 
 COLUMNS = [
@@ -31,6 +39,37 @@ COLUMNS = [
 
 
 class LocalPipelineTests(unittest.TestCase):
+    def test_snapshot_history_guard_detects_loss_and_restores_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot = Path(temp_dir) / "dashboard.csv"
+            original = pd.DataFrame(
+                [
+                    ["Wrappiness", "2026-07-10", "A1", 10, 1, 1, "", ""],
+                    ["Wrappiness", "2026-08-10", "A2", 20, 1, 1, "", ""],
+                ],
+                columns=[
+                    "Store", "Date", "ASIN", "Revenue", "Orders", "Units",
+                    "record_id_hint", "sku_code",
+                ],
+            )
+            save_snapshot(snapshot, original, report_as_of_date="2026-08-10")
+            backup = capture_snapshot(snapshot)
+            expected_months = snapshot_months(snapshot)
+
+            save_snapshot(
+                snapshot,
+                original[original["Date"].str.startswith("2026-08")],
+                report_as_of_date="2026-08-10",
+            )
+            missing = missing_snapshot_months(expected_months, snapshot_months(snapshot))
+
+            self.assertEqual(missing, ["2026-07"])
+            restore_snapshot(backup)
+            self.assertEqual(snapshot_months(snapshot), ["2026-07", "2026-08"])
+            self.assertEqual(
+                load_snapshot_metadata(snapshot)["report_as_of_date"], "2026-08-10"
+            )
+
     def test_export_preserves_distinct_sku_codes_for_same_asin(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

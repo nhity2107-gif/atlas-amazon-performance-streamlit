@@ -13,6 +13,15 @@ import team_kpi
 
 
 class StreamlitHotReloadTests(unittest.TestCase):
+    def test_local_update_tool_reloads_pipeline_and_guards_month_history(self) -> None:
+        tool_path = Path(__file__).resolve().parents[1] / "local_update_tool.py"
+        source = tool_path.read_text(encoding="utf-8")
+
+        self.assertIn("import scripts.local_data_pipeline as _local_data_pipeline", source)
+        self.assertIn("importlib.reload(_local_data_pipeline)", source)
+        self.assertIn("missing_snapshot_months", source)
+        self.assertIn("Đã chặn publish", source)
+
     def test_team_kpi_has_no_password_gate(self) -> None:
         app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
         source = app_path.read_text(encoding="utf-8")
@@ -40,6 +49,11 @@ class StreamlitHotReloadTests(unittest.TestCase):
             app_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
             app = AppTest.from_file(str(app_path)).run(timeout=60)
             self.assertEqual([str(error.value) for error in app.exception], [])
+            period_selector = next(
+                selector for selector in app.selectbox if selector.label == "Kỳ báo cáo"
+            )
+            self.assertIn("Q3-2026", period_selector.options)
+            self.assertIn("Q4-2026", period_selector.options)
             self.assertTrue(hasattr(target_data, "daily_targets_for_month"))
             self.assertTrue(
                 hasattr(lark_snapshot_store, "load_encrypted_lark_snapshot")

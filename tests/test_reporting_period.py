@@ -23,6 +23,28 @@ class ReportingPeriodTests(unittest.TestCase):
         )
         self.assertEqual(period_label("H2/2026"), "H2/2026")
 
+    def test_q3_2026_covers_july_through_september(self) -> None:
+        self.assertEqual(
+            period_months("Q3-2026"),
+            ["2026-07", "2026-08", "2026-09"],
+        )
+        self.assertEqual(
+            period_bounds("Q3-2026"),
+            (pd.Timestamp("2026-07-01"), pd.Timestamp("2026-09-30")),
+        )
+        self.assertEqual(period_label("Q3-2026"), "Q3-2026")
+
+    def test_q4_2026_covers_october_through_december(self) -> None:
+        self.assertEqual(
+            period_months("Q4-2026"),
+            ["2026-10", "2026-11", "2026-12"],
+        )
+        self.assertEqual(
+            period_bounds("Q4-2026"),
+            (pd.Timestamp("2026-10-01"), pd.Timestamp("2026-12-31")),
+        )
+        self.assertEqual(period_label("Q4-2026"), "Q4-2026")
+
 
 if __name__ == "__main__":
     unittest.main()
