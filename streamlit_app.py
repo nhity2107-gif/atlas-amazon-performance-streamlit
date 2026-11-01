@@ -19,6 +19,7 @@ from product_data import (
     fulfillment_revenue_frame,
     records_from_order_hints,
     revenue_milestone_counts,
+    unit_milestone_counts,
     top_record_id_frame,
     top_sku_code_frame,
 )
@@ -1017,6 +1018,9 @@ def employee_kpi_tables(
     idea_table = idea_table.merge(
         revenue_milestone_counts(idea, "idea_by"), on="Nhân sự", how="left"
     )
+    idea_table = idea_table.merge(
+        unit_milestone_counts(idea, "idea_by"), on="Nhân sự", how="left"
+    )
     idea_table["Validated_Rate"] = idea_table["Validated_Records"].div(
         idea_table["Cohort_Records"].where(idea_table["Cohort_Records"].ne(0))
     )
@@ -1056,6 +1060,9 @@ def employee_kpi_tables(
     )
     product_table = product_table.merge(
         revenue_milestone_counts(product, "managed_by"), on="Nhân sự", how="left"
+    )
+    product_table = product_table.merge(
+        unit_milestone_counts(product, "managed_by"), on="Nhân sự", how="left"
     )
     product_table["Sold_Rate"] = product_table["Sold_Records"].div(
         product_table["Cohort_Records"].where(product_table["Cohort_Records"].ne(0))
@@ -1145,6 +1152,7 @@ def employee_kpi_tables(
         revenue_asins.rename(columns={"Revenue_Owner": "milestone_owner"}),
         "milestone_owner",
     )
+    ads_unit_milestones = unit_milestone_counts(ads, "ads_by")
     allocated_revenue = (
         revenue_asins.groupby("Revenue_Owner", as_index=False)
         .agg(Allocated_Portfolio_Revenue=("Revenue", "sum"))
@@ -1159,6 +1167,7 @@ def employee_kpi_tables(
     ads_table = ads_table.merge(allocated_revenue, on="Nhân sự", how="outer")
     ads_table = ads_table.merge(ads_new_revenue, on="Nhân sự", how="outer")
     ads_table = ads_table.merge(ads_revenue_milestones, on="Nhân sự", how="outer")
+    ads_table = ads_table.merge(ads_unit_milestones, on="Nhân sự", how="outer")
     ads_table["Portfolio_Revenue"] = ads_table["Allocated_Portfolio_Revenue"].combine_first(
         ads_table["Portfolio_Revenue"]
     )
@@ -1197,8 +1206,15 @@ def employee_kpi_tables(
         "Portfolio_Records_15000_Revenue",
         "Portfolio_Records_20000_Revenue",
     ]
+    unit_milestone_columns = [
+        "Portfolio_Records_500_Units",
+        "Portfolio_Records_1000_Units",
+        "Portfolio_Records_2000_Units",
+        "Portfolio_Records_3000_Units",
+        "Portfolio_Records_5000_Units",
+    ]
     for table in (idea_table, product_table, ads_table):
-        for column in milestone_columns:
+        for column in [*unit_milestone_columns, *milestone_columns]:
             table[column] = pd.to_numeric(table[column], errors="coerce").fillna(0)
 
     idea_table = idea_table[
@@ -1206,6 +1222,7 @@ def employee_kpi_tables(
             "Nhân sự",
             "Qualified_Ideas",
             "Portfolio_Records_10_Units",
+            *unit_milestone_columns,
             *milestone_columns,
             "Cohort_Records",
             "Validated_Records",
@@ -1218,6 +1235,7 @@ def employee_kpi_tables(
             "Nhân sự",
             "Qualified_ASINs",
             "Portfolio_Records_10_Units",
+            *unit_milestone_columns,
             *milestone_columns,
             "Cohort_Records",
             "Sold_Records",
@@ -1232,6 +1250,7 @@ def employee_kpi_tables(
         [
             "Nhân sự",
             "New_Winner_Created",
+            *unit_milestone_columns,
             *milestone_columns,
             "Ads_Spend",
             "Ads_Sales",
@@ -2266,6 +2285,7 @@ else:
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
 - **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN FBM thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID FBM có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD rồi loại mọi dòng map tới ASIN FBA trước khi gộp KPI, kể cả campaign `Support` hoặc marker `LINH`/`HIEU`/`HA`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
 - **Revenue milestones:** các cột `Record IDs ≥$1K/≥$3K/≥$5K/≥$10K/≥$15K/≥$20K` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có Revenue trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
+- **Units milestones:** các cột `Record IDs ≥500/≥1K/≥2K/≥3K/≥5K Units` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có tổng Units FBM trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
                             """
                         )
                     for title, table in tables.items():
@@ -2275,6 +2295,11 @@ else:
                                 columns={
                                     "Qualified_Ideas": "Qualified_Ideas (Pickup Date)",
                                     "Portfolio_Records_10_Units": "Portfolio_Record_IDs (≥10 Units)",
+                                    "Portfolio_Records_500_Units": "Record_IDs (≥500 Units)",
+                                    "Portfolio_Records_1000_Units": "Record_IDs (≥1K Units)",
+                                    "Portfolio_Records_2000_Units": "Record_IDs (≥2K Units)",
+                                    "Portfolio_Records_3000_Units": "Record_IDs (≥3K Units)",
+                                    "Portfolio_Records_5000_Units": "Record_IDs (≥5K Units)",
                                     "Portfolio_Records_1000_Revenue": "Record_IDs (≥$1K Revenue)",
                                     "Portfolio_Records_3000_Revenue": "Record_IDs (≥$3K Revenue)",
                                     "Portfolio_Records_5000_Revenue": "Record_IDs (≥$5K Revenue)",

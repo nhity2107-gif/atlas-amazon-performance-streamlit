@@ -26,6 +26,13 @@ REVENUE_MILESTONE_COLUMNS = {
     15000: "Portfolio_Records_15000_Revenue",
     20000: "Portfolio_Records_20000_Revenue",
 }
+UNIT_MILESTONE_COLUMNS = {
+    500: "Portfolio_Records_500_Units",
+    1000: "Portfolio_Records_1000_Units",
+    2000: "Portfolio_Records_2000_Units",
+    3000: "Portfolio_Records_3000_Units",
+    5000: "Portfolio_Records_5000_Units",
+}
 
 
 def first_nonempty(series: pd.Series) -> str:
@@ -111,6 +118,39 @@ def revenue_milestone_counts(
         .agg(**{
             column: (column, "sum")
             for column in REVENUE_MILESTONE_COLUMNS.values()
+        })
+        .rename(columns={owner_column: "Nhân sự"})
+    )
+    return summary[columns]
+
+
+def unit_milestone_counts(
+    records: pd.DataFrame,
+    owner_column: str,
+) -> pd.DataFrame:
+    """Count unique owned Record IDs reaching monthly Units milestones."""
+    columns = ["Nhân sự", *UNIT_MILESTONE_COLUMNS.values()]
+    required = {"record_id", owner_column, "Units"}
+    if records.empty or not required.issubset(records.columns):
+        return pd.DataFrame(columns=columns)
+    frame = records[["record_id", owner_column, "Units"]].copy()
+    frame["record_id"] = frame["record_id"].fillna("").astype(str).str.strip()
+    frame[owner_column] = frame[owner_column].fillna("").astype(str).str.strip()
+    frame["Units"] = pd.to_numeric(frame["Units"], errors="coerce").fillna(0)
+    frame = frame[frame["record_id"].ne("") & frame[owner_column].ne("")]
+    if frame.empty:
+        return pd.DataFrame(columns=columns)
+    frame = (
+        frame.groupby([owner_column, "record_id"], as_index=False)
+        .agg(Units=("Units", "sum"))
+    )
+    for threshold, column in UNIT_MILESTONE_COLUMNS.items():
+        frame[column] = frame["Units"].ge(threshold)
+    summary = (
+        frame.groupby(owner_column, as_index=False)
+        .agg(**{
+            column: (column, "sum")
+            for column in UNIT_MILESTONE_COLUMNS.values()
         })
         .rename(columns={owner_column: "Nhân sự"})
     )

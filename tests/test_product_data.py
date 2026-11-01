@@ -12,6 +12,7 @@ from product_data import (
     top_record_id_frame,
     top_sku_code_frame,
     sku_code_from_sku,
+    unit_milestone_counts,
 )
 
 
@@ -70,6 +71,28 @@ class ProductDataTests(unittest.TestCase):
         self.assertEqual(result.loc["Bob", "Portfolio_Records_10000_Revenue"], 3)
         self.assertEqual(result.loc["Bob", "Portfolio_Records_15000_Revenue"], 2)
         self.assertEqual(result.loc["Bob", "Portfolio_Records_20000_Revenue"], 1)
+
+    def test_unit_milestones_count_unique_owned_record_ids(self) -> None:
+        records = pd.DataFrame([
+            {"record_id": "rec1", "owner": "Alice", "Units": 300},
+            {"record_id": "rec1", "owner": "Alice", "Units": 200},
+            {"record_id": "rec2", "owner": "Alice", "Units": 1000},
+            {"record_id": "rec3", "owner": "Alice", "Units": 3000},
+            {"record_id": "rec4", "owner": "Bob", "Units": 499},
+            {"record_id": "rec5", "owner": "Bob", "Units": 2000},
+            {"record_id": "rec6", "owner": "Bob", "Units": 5000},
+        ])
+
+        result = unit_milestone_counts(records, "owner").set_index("Nhân sự")
+
+        self.assertEqual(result.loc["Alice", "Portfolio_Records_500_Units"], 3)
+        self.assertEqual(result.loc["Alice", "Portfolio_Records_1000_Units"], 2)
+        self.assertEqual(result.loc["Alice", "Portfolio_Records_2000_Units"], 1)
+        self.assertEqual(result.loc["Alice", "Portfolio_Records_3000_Units"], 1)
+        self.assertEqual(result.loc["Alice", "Portfolio_Records_5000_Units"], 0)
+        self.assertEqual(result.loc["Bob", "Portfolio_Records_500_Units"], 2)
+        self.assertEqual(result.loc["Bob", "Portfolio_Records_2000_Units"], 2)
+        self.assertEqual(result.loc["Bob", "Portfolio_Records_5000_Units"], 1)
 
     def test_revenue_is_grouped_and_all_employee_roles_are_mapped(self) -> None:
         records = pd.DataFrame(
