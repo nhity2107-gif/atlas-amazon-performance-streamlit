@@ -9,6 +9,7 @@ from team_kpi import (
     asin_portfolio_revenue,
     fbm_asin_rows,
     idea_validation_cohort_end,
+    wholly_new_record_cohort,
     workflow_kpi_window_end,
 )
 
@@ -53,6 +54,46 @@ class TeamKpiTests(unittest.TestCase):
         result = fbm_asin_rows(attributed)
         self.assertEqual(result["asin"].tolist(), ["fbm"])
         self.assertEqual(result["Revenue"].sum(), 100)
+
+    def test_wholly_new_record_cohort_excludes_old_record_with_new_asin(self) -> None:
+        events = pd.DataFrame(
+            [
+                {
+                    "record_id": "old-record",
+                    "asin": "old-asin",
+                    "listing_done_date": "2026-09-10",
+                },
+                {
+                    "record_id": "old-record",
+                    "asin": "new-asin",
+                    "listing_done_date": "2026-10-05",
+                },
+                {
+                    "record_id": "new-record",
+                    "asin": "new-only",
+                    "listing_done_date": "2026-10-06",
+                },
+                {
+                    "record_id": "undated-record",
+                    "asin": "undated",
+                    "listing_done_date": "",
+                },
+            ]
+        )
+
+        result = wholly_new_record_cohort(
+            events,
+            pd.Timestamp("2026-09-20"),
+            pd.Timestamp("2026-10-31"),
+        ).set_index("record_id")
+
+        self.assertFalse(bool(result.loc["old-record", "in_cohort"]))
+        self.assertEqual(
+            result.loc["old-record", "first_event_date"],
+            pd.Timestamp("2026-09-10"),
+        )
+        self.assertTrue(bool(result.loc["new-record", "in_cohort"]))
+        self.assertFalse(bool(result.loc["undated-record", "in_cohort"]))
 
     def test_new_revenue_only_counts_each_asin_inside_custom_done_cohort(self) -> None:
         attributed = pd.DataFrame(

@@ -19,6 +19,7 @@ from product_data import (
     fulfillment_revenue_frame,
     records_from_order_hints,
     revenue_milestone_counts,
+    unit_milestone_counts,
     top_record_id_frame,
     top_sku_code_frame,
 )
@@ -52,6 +53,7 @@ asin_new_revenue_from_custom_cohort = _team_kpi.asin_new_revenue_from_custom_coh
 asin_portfolio_revenue = _team_kpi.asin_portfolio_revenue
 fbm_asin_rows = _team_kpi.fbm_asin_rows
 idea_validation_cohort_end = _team_kpi.idea_validation_cohort_end
+wholly_new_record_cohort = _team_kpi.wholly_new_record_cohort
 workflow_kpi_window_end = _team_kpi.workflow_kpi_window_end
 _lark_snapshot_store = importlib.reload(
     importlib.import_module("lark_snapshot_store")
@@ -1016,23 +1018,34 @@ def employee_kpi_tables(
     idea_table = idea_table.merge(
         revenue_milestone_counts(idea, "idea_by"), on="Nhân sự", how="left"
     )
+    idea_table = idea_table.merge(
+        unit_milestone_counts(idea, "idea_by"), on="Nhân sự", how="left"
+    )
     idea_table["Validated_Rate"] = idea_table["Validated_Records"].div(
         idea_table["Cohort_Records"].where(idea_table["Cohort_Records"].ne(0))
     )
 
     product_events = attributed_asins.copy()
-    product_events["listing_in_cohort"] = in_lark_calendar_window(
-        product_events["listing_done_date"], cohort_start, window_end
+    product_cohort = wholly_new_record_cohort(
+        product_events,
+        cohort_start,
+        window_end,
     )
     product = (
         product_events.groupby("record_id", as_index=False)
         .agg(
             managed_by=("managed_by", first_nonempty),
-            in_cohort=("listing_in_cohort", "any"),
             Revenue=("Revenue", "sum"),
             Units=("Units", "sum"),
         )
+        .merge(
+            product_cohort[["record_id", "first_event_date", "in_cohort"]],
+            on="record_id",
+            how="left",
+            validate="one_to_one",
+        )
     )
+    product["in_cohort"] = product["in_cohort"].fillna(False)
     product = product[product["managed_by"].fillna("").str.strip().ne("")].copy()
     product["validated"] = product["Units"].ge(10)
     product["cohort_sold"] = product["in_cohort"] & product["validated"]
@@ -1047,6 +1060,9 @@ def employee_kpi_tables(
     )
     product_table = product_table.merge(
         revenue_milestone_counts(product, "managed_by"), on="Nhân sự", how="left"
+    )
+    product_table = product_table.merge(
+        unit_milestone_counts(product, "managed_by"), on="Nhân sự", how="left"
     )
     product_table["Sold_Rate"] = product_table["Sold_Records"].div(
         product_table["Cohort_Records"].where(product_table["Cohort_Records"].ne(0))
@@ -1136,6 +1152,7 @@ def employee_kpi_tables(
         revenue_asins.rename(columns={"Revenue_Owner": "milestone_owner"}),
         "milestone_owner",
     )
+    ads_unit_milestones = unit_milestone_counts(ads, "ads_by")
     allocated_revenue = (
         revenue_asins.groupby("Revenue_Owner", as_index=False)
         .agg(Allocated_Portfolio_Revenue=("Revenue", "sum"))
@@ -1150,6 +1167,7 @@ def employee_kpi_tables(
     ads_table = ads_table.merge(allocated_revenue, on="Nhân sự", how="outer")
     ads_table = ads_table.merge(ads_new_revenue, on="Nhân sự", how="outer")
     ads_table = ads_table.merge(ads_revenue_milestones, on="Nhân sự", how="outer")
+    ads_table = ads_table.merge(ads_unit_milestones, on="Nhân sự", how="outer")
     ads_table["Portfolio_Revenue"] = ads_table["Allocated_Portfolio_Revenue"].combine_first(
         ads_table["Portfolio_Revenue"]
     )
@@ -1188,8 +1206,15 @@ def employee_kpi_tables(
         "Portfolio_Records_15000_Revenue",
         "Portfolio_Records_20000_Revenue",
     ]
+    unit_milestone_columns = [
+        "Portfolio_Records_500_Units",
+        "Portfolio_Records_1000_Units",
+        "Portfolio_Records_2000_Units",
+        "Portfolio_Records_3000_Units",
+        "Portfolio_Records_5000_Units",
+    ]
     for table in (idea_table, product_table, ads_table):
-        for column in milestone_columns:
+        for column in [*unit_milestone_columns, *milestone_columns]:
             table[column] = pd.to_numeric(table[column], errors="coerce").fillna(0)
 
     idea_table = idea_table[
@@ -1197,6 +1222,7 @@ def employee_kpi_tables(
             "Nhân sự",
             "Qualified_Ideas",
             "Portfolio_Records_10_Units",
+            *unit_milestone_columns,
             *milestone_columns,
             "Cohort_Records",
             "Validated_Records",
@@ -1209,6 +1235,7 @@ def employee_kpi_tables(
             "Nhân sự",
             "Qualified_ASINs",
             "Portfolio_Records_10_Units",
+            *unit_milestone_columns,
             *milestone_columns,
             "Cohort_Records",
             "Sold_Records",
@@ -1223,6 +1250,7 @@ def employee_kpi_tables(
         [
             "Nhân sự",
             "New_Winner_Created",
+            *unit_milestone_columns,
             *milestone_columns,
             "Ads_Spend",
             "Ads_Sales",
@@ -2182,7 +2210,8 @@ else:
                     st.caption(
                         "Idea theo MRND IDEA Pickup Date; Product output và Product Support theo "
                         "Custom Check Done Date; cohort Sold/Validated vẫn theo Record ID, trong đó "
-                        "Idea Validated chốt ngày 20 tháng này, còn Product Sold và "
+                        "Idea Validated chốt ngày 20 tháng này, Product Sold chỉ tính Record ID "
+                        "có Listing Done đầu tiên trong cohort, còn "
                         "Product/Ads New Revenue theo từng ASIN có Custom Check Done từ ngày 20 "
                         "tháng trước đến cuối time window. Toàn bộ Order và Ads FBA bị loại khỏi "
                         "các bảng KPI nhân sự."
@@ -2252,10 +2281,11 @@ else:
                             """
 - **Phạm vi fulfillment:** toàn bộ bảng KPI nhân sự chỉ dùng ASIN có `Fulfill By = FBM`; Order, Revenue, Units, ASIN count và Ads Spend/Sales/Orders của FBA đều bị loại. Overview và Ads Performance tổng vẫn giữ FBA + FBM để đối soát store.
 - **Idea:** Qualified Ideas theo Pickup Date; `Pickup Cohort` là unique Record ID FBM có Pickup Date từ ngày 20 tháng trước đến ngày 20 tháng này. Validated Rate chỉ dùng cohort này và ngưỡng tổng Units FBM ≥10. `Revenue` là tổng doanh thu tháng của toàn bộ ASIN FBM thuộc Idea ownership.
-- **Product:** Qualified ASINs là unique ASIN FBM theo Custom Check Done Date; `Listing Cohort` là unique Record ID FBM có Listing Done Date từ ngày 20 tháng trước đến cuối kỳ. Sold Records là Record ID trong cohort có tổng Units FBM ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN FBM thuộc Managed By; `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
+- **Product:** Qualified ASINs là unique ASIN FBM theo Custom Check Done Date; `New Listing Cohort` chỉ gồm unique Record ID FBM có **Listing Done Date sớm nhất của toàn Record ID** từ ngày 20 tháng trước đến cuối kỳ. Record cũ thêm ASIN/listing mới trong cohort không được tính lại. Sold Records là Record ID mới hoàn toàn trong cohort có tổng Units FBM ≥10. `Portfolio Revenue` là doanh thu của toàn bộ ASIN FBM thuộc Managed By; `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort 20 tháng trước–cuối kỳ.
 - **Product Support:** Qualified Custom ASINs theo Custom Check Done Date; Asset Points theo ngày tạo/cập nhật asset và ma trận 10/5/10/5 điểm, không tính reuse/duplicate.
 - **Ads:** `Portfolio Revenue` là doanh thu tháng của toàn bộ ASIN FBM thuộc Ads ownership. `New Revenue` chỉ gồm các ASIN FBM có chính `Custom Check Done Date` nằm trong cohort ngày 20 tháng trước đến cuối kỳ. Winner vẫn là Record ID FBM có Revenue ≥ $5,000. Spend/Sales lấy từ ba report SP/SB/SD rồi loại mọi dòng map tới ASIN FBA trước khi gộp KPI, kể cả campaign `Support` hoặc marker `LINH`/`HIEU`/`HA`. `ACOS = Spend / Ads Sales`; `TACOS = Spend / Portfolio Revenue` chỉ áp dụng cho hàng có ownership Revenue.
 - **Revenue milestones:** các cột `Record IDs ≥$1K/≥$3K/≥$5K/≥$10K/≥$15K/≥$20K` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có Revenue trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
+- **Units milestones:** các cột `Record IDs ≥500/≥1K/≥2K/≥3K/≥5K Units` đếm unique Record ID thuộc toàn bộ ownership của nhân sự có tổng Units FBM trong Purchase Month đang chọn đạt ngưỡng tương ứng; không giới hạn theo workflow cohort.
                             """
                         )
                     for title, table in tables.items():
@@ -2265,6 +2295,11 @@ else:
                                 columns={
                                     "Qualified_Ideas": "Qualified_Ideas (Pickup Date)",
                                     "Portfolio_Records_10_Units": "Portfolio_Record_IDs (≥10 Units)",
+                                    "Portfolio_Records_500_Units": "Record_IDs (≥500 Units)",
+                                    "Portfolio_Records_1000_Units": "Record_IDs (≥1K Units)",
+                                    "Portfolio_Records_2000_Units": "Record_IDs (≥2K Units)",
+                                    "Portfolio_Records_3000_Units": "Record_IDs (≥3K Units)",
+                                    "Portfolio_Records_5000_Units": "Record_IDs (≥5K Units)",
                                     "Portfolio_Records_1000_Revenue": "Record_IDs (≥$1K Revenue)",
                                     "Portfolio_Records_3000_Revenue": "Record_IDs (≥$3K Revenue)",
                                     "Portfolio_Records_5000_Revenue": "Record_IDs (≥$5K Revenue)",
@@ -2274,7 +2309,7 @@ else:
                                     "Cohort_Records": (
                                         f"Pickup_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{idea_validation_cohort_end(window_end):%d/%m})"
                                         if title.startswith("Idea")
-                                        else f"Listing_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
+                                        else f"New_Listing_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
                                         if title.startswith("Product ·")
                                         else f"Custom_Check_Cohort_Record_IDs ({validation_cohort_start(window_end):%d/%m}–{window_end:%d/%m})"
                                     ),

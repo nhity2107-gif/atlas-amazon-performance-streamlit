@@ -40,6 +40,40 @@ def idea_validation_cohort_end(window_end: pd.Timestamp) -> pd.Timestamp:
     return pd.Timestamp(window_end).normalize().replace(day=20)
 
 
+def wholly_new_record_cohort(
+    events: pd.DataFrame,
+    cohort_start: pd.Timestamp,
+    cohort_end: pd.Timestamp,
+    *,
+    record_column: str = "record_id",
+    event_date_column: str = "listing_done_date",
+) -> pd.DataFrame:
+    """Flag records whose earliest event date falls inside the cohort.
+
+    A record that existed before the cohort remains outside it even when a new
+    ASIN/event is added during the cohort. This prevents an old Record ID from
+    being counted again as a newly listed product.
+    """
+    required = {record_column, event_date_column}
+    missing = sorted(required.difference(events.columns))
+    if missing:
+        raise ValueError("Record cohort source thiếu cột: " + ", ".join(missing))
+
+    dated = events[[record_column, event_date_column]].copy()
+    dated[event_date_column] = pd.to_datetime(
+        dated[event_date_column], errors="coerce"
+    )
+    result = (
+        dated.groupby(record_column, as_index=False, dropna=False)
+        .agg(first_event_date=(event_date_column, "min"))
+    )
+    result["in_cohort"] = result["first_event_date"].dt.normalize().between(
+        pd.Timestamp(cohort_start).normalize(),
+        pd.Timestamp(cohort_end).normalize(),
+    )
+    return result
+
+
 def asin_portfolio_revenue(
     attributed_asins: pd.DataFrame,
     owner_column: str,
