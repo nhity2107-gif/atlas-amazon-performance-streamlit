@@ -63,7 +63,15 @@ def run_git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 
 def is_non_fast_forward_error(error: subprocess.CalledProcessError) -> bool:
     message = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
-    return "fetch first" in message or "non-fast-forward" in message
+    return (
+        "fetch first" in message
+        or "non-fast-forward" in message
+        or (
+            "remote rejected" in message
+            and "cannot lock ref" in message
+            and "but expected" in message
+        )
+    )
 
 
 def sync_remote_preserving(

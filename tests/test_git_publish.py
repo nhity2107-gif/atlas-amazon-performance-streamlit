@@ -27,6 +27,18 @@ class GitPublishTests(unittest.TestCase):
         )
         self.assertTrue(is_non_fast_forward_error(error))
 
+    def test_detects_remote_ref_lock_race_as_retryable(self) -> None:
+        error = subprocess.CalledProcessError(
+            1,
+            ["git", "push"],
+            stderr=(
+                "! [remote rejected] main -> main "
+                "(cannot lock ref 'refs/heads/main': is at 5139efd "
+                "but expected 60186ad)"
+            ),
+        )
+        self.assertTrue(is_non_fast_forward_error(error))
+
     def test_sync_keeps_local_snapshot_and_merges_remote_code(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
