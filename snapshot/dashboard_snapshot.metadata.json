@@ -1,7 +1,7 @@
 {
   "schema_version": "order-snapshot-v4",
-  "updated_at": "2026-11-17T07:41:17.719408+00:00",
-  "source_updated_at": "2026-11-17T07:41:16.939325+00:00",
+  "updated_at": "2026-11-17T08:23:01.206755+00:00",
+  "source_updated_at": "2026-11-17T08:23:00.869770+00:00",
   "report_as_of_date": "2026-11-16",
   "timezone": "America/Los_Angeles",
   "date_min": "2026-07-01",
