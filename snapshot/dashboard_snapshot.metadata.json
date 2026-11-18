@@ -1,10 +1,10 @@
 {
   "schema_version": "order-snapshot-v4",
-  "updated_at": "2026-11-18T04:58:56.702530+00:00",
-  "source_updated_at": "2026-11-18T04:58:56.394537+00:00",
+  "updated_at": "2026-11-18T08:02:54.349070+00:00",
+  "source_updated_at": "2026-11-18T08:02:53.511754+00:00",
   "report_as_of_date": "2026-11-17",
   "timezone": "America/Los_Angeles",
   "date_min": "2026-07-01",
   "date_max": "2026-11-17",
-  "rows": 24545
+  "rows": 24558
 }
